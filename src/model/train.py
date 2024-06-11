@@ -8,6 +8,8 @@ from argparse import ArgumentParser
 import numpy as np
 import torch
 import wandb
+from sklearn.metrics import (accuracy_score, f1_score, precision_score,
+                             recall_score)
 from sklearn.model_selection import train_test_split
 from src.dataset.dataset import ElabDataset
 from src.model.egnn_clean import EGNN
@@ -47,10 +49,58 @@ def run_epoch(model, optim, train_dataloader, eval_dataloader, loss_fn=BCELoss()
     return np.mean(epoch_train_losses), epoch_val_loss
 
 
+def test_eval(model, test_loader, loss_fn=BCELoss()):
+    """
+
+    :param model:
+    :param test_loader:
+    :param loss_fn:
+    :return:
+    """
+    model.eval()  # Set the model to evaluation mode
+    test_losses = []
+    all_labels = []
+    all_predictions = []
+
+    with torch.no_grad():  # Disable gradient calculation for evaluation
+        for data in test_loader:
+            y_true = data.y
+            y_pred, _ = model(data.x, data.pos, data.edge_index, data.edge_attr)
+            loss = loss_fn(y_pred, y_true)
+            test_losses.append(loss.detach().numpy())
+
+            # Convert outputs to binary predictions
+            predictions = (y_pred >= 0.5).float()
+
+            all_labels.append(y_true)
+            all_predictions.append(np.array(predictions))
+
+    # Concatenate all labels and predictions from batches
+    all_labels = np.concatenate(all_labels)
+    all_predictions = np.concatenate(all_predictions)
+
+    # Calculate metrics
+    accuracy = accuracy_score(all_labels, all_predictions)
+    precision = precision_score(all_labels, all_predictions)
+    recall = recall_score(all_labels, all_predictions)
+    f1 = f1_score(all_labels, all_predictions)
+
+    # Calculate average loss
+    avg_loss = np.mean(test_losses)
+
+    print(f"Test Loss: {avg_loss:.4f}")
+    print(f"Accuracy: {accuracy:.4f}")
+    print(f"Precision: {precision:.4f}")
+    print(f"Recall: {recall:.4f}")
+    print(f"F1 Score: {f1:.4f}")
+
+    return avg_loss, accuracy, precision, recall, f1
+
+
 def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_size, n_cpus, hidden_nf, list_of_vectors=None, random_state=42, lr=1e-4,
          processed_dir=None, save_processed_files=None, model_dir=None, use_wandb=False, project_name='elab_egnn',
          prot_dist_threshold=8, intra_cutoff=2, inter_cutoff=10, mol_file_suffix='.mol', pdb_file_suffix='_receptor.pdb',
-         verbose=True):
+         verbose=True, loss_fn=BCELoss()):
     """
 
     :param n_epochs:
@@ -74,6 +124,7 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
     :param mol_file_suffix:
     :param pdb_file_suffix:
     :param verbose:
+    :param loss_fn:
     :return:
     """
     if not model_dir:
@@ -126,7 +177,7 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
     epochs_without_improvement = 0
 
     for epoch in range(n_epochs):
-        train_loss, val_loss = run_epoch(model, optim, train_dataloader, val_dataloader)
+        train_loss, val_loss = run_epoch(model, optim, train_dataloader, val_dataloader, loss_fn=loss_fn)
         train_losses.append(train_loss)
         val_losses.append(val_loss)
 
@@ -153,6 +204,15 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
             run.log({'epoch': epoch,
                      'train_loss': train_loss,
                      'val_loss': val_loss})
+
+    avg_loss, accuracy, precision, recall, f1 = test_eval(model, test_dataloader, loss_fn=loss_fn)
+
+    if use_wandb:
+        run.log({'test': {'loss': avg_loss,
+                          'accuracy': accuracy,
+                          'precision': precision,
+                           'recall': recall,
+                           'f1': f1}})
 
     if use_wandb:
         run.finish()
