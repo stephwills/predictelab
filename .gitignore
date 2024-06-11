@@ -4,3 +4,5 @@ test/model/*
 test/processed/*
 .idea/
 .idea
+*__pycache__*
+
