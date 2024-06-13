@@ -242,6 +242,7 @@ def main():
     parser.add_argument('--mol_file_suffix', default=config.MOL_FILE_SUFFIX)
     parser.add_argument('--pdb_file_suffix', default=config.PDB_FILE_SUFFIX)
     parser.add_argument('--random_state', type=int, default=config.RANDOM_STATE)
+    parser.add_argument('--lr', type=float, default=config.LR)
     args = parser.parse_args()
 
     # save arguments to model dir
