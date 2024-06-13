@@ -225,6 +225,8 @@ def main():
     import src.utils.config as config
     parser = ArgumentParser()
     parser.add_argument('--data_json', help='dict containing {lig_codes: [], mol_files: [], pdb_files: []}')
+    parser.add_argument('--pdb_dir', help='path where the pdb fpaths are located')
+    parser.add_argument('--precursor_dir', help='path where the mol fpaths are located')
     parser.add_argument('--processed_dir', help='dir to save processed data')
     parser.add_argument('--model_dir')
     parser.add_argument('--run_name')
