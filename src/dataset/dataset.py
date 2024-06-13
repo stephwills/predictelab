@@ -30,6 +30,7 @@ class ElabDataset(Dataset):
         # if data not processed already
         self.mol_files = mol_files
         self.pdb_files = pdb_files
+        # if vectors are not supplier, assume stored as molprop
         self.list_of_vectors = list_of_vectors
         self.mol_file_suffix = mol_file_suffix
         self.pdb_file_suffix = pdb_file_suffix
@@ -132,19 +133,32 @@ class ElabDataset(Dataset):
 
         self.processed_data = []
 
-        for pdb_file, mol_file, lig_code in zip(self.pdb_files, self.mol_files, self.lig_codes):
-            h, y, x, edge_index, edge_attr = convert_to_graph(mol_file, pdb_file, self.prot_dist_threshold,
-                                                              self.intra_cutoff, self.inter_cutoff)
-            data_dict = {'node_feats': h,
-                            'labels': y,
-                            'pos': x,
-                            'edges': edge_index,
-                            'edge_feats': edge_attr}
-            self.processed_data.append(data_dict)
-            if self.save_processed_files and self.processed_dir:
-                pt_file = os.path.join(self.processed_dir, f"{lig_code}.pt")
-                torch.save(data_dict, pt_file)
-                self.pt_files.append(pt_file)
+        if self.list_of_vectors:
+            for pdb_file, mol_file, lig_code, vectors in zip(self.pdb_files, self.mol_files, self.lig_codes, self.list_of_vectors):
+                h, y, x, edge_index, edge_attr = convert_to_graph(mol_file, pdb_file, self.prot_dist_threshold, self.intra_cutoff, self.inter_cutoff, vectors=vectors, vectors_are_molprop=False)
+                data_dict = {'node_feats': h,
+                                'labels': y,
+                                'pos': x,
+                                'edges': edge_index,
+                                'edge_feats': edge_attr}
+                self.processed_data.append(data_dict)
+                if self.save_processed_files and self.processed_dir:
+                    pt_file = os.path.join(self.processed_dir, f"{lig_code}.pt")
+                    torch.save(data_dict, pt_file)
+                    self.pt_files.append(pt_file)
+        else:
+            for pdb_file, mol_file, lig_code in zip(self.pdb_files, self.mol_files, self.lig_codes):
+                h, y, x, edge_index, edge_attr = convert_to_graph(mol_file, pdb_file, self.prot_dist_threshold, self.intra_cutoff, self.inter_cutoff, vectors=None, vectors_are_molprop=True)
+                data_dict = {'node_feats': h,
+                                'labels': y,
+                                'pos': x,
+                                'edges': edge_index,
+                                'edge_feats': edge_attr}
+                self.processed_data.append(data_dict)
+                if self.save_processed_files and self.processed_dir:
+                    pt_file = os.path.join(self.processed_dir, f"{lig_code}.pt")
+                    torch.save(data_dict, pt_file)
+                    self.pt_files.append(pt_file)
 
     def __len__(self):
         """
