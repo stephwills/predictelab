@@ -256,6 +256,8 @@ def main():
     with open(args.data_json, "r") as f:
         data = json.load(f)
     lig_codes, mol_files, pdb_files = data['lig_codes'], data['mol_files'], data['pdb_files']
+    mol_files = [os.path.join(args.precursor_dir, file) for file in mol_files]
+    pdb_files = [os.path.join(args.pdb_dir, file) for file in pdb_files]
 
     train(args.n_epochs, args.patience, lig_codes, mol_files, pdb_files, args.batch_size, args.test_size, args.n_cpus,
           args.hidden_nf, list_of_vectors=None, random_state=args.random_state, lr=args.lr, processed_dir=args.processed_dir,

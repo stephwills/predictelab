@@ -45,7 +45,7 @@ def get_ligand_coords(file, returnVectors=False):
             vectors = mol.GetProp('vectors').split(',')
         else:
             # print('No vectors for', file)
-            pass
+            vectors = []
 
     conf = mol.GetConformer()
 
@@ -94,7 +94,7 @@ def get_atom_feature_vector(elem, isProt):
 
 def get_ligand_bond_features(bond, use_stereochemistry=True):
     """
-    Adapt from https://www.blopig.com/blog/2022/02/how-to-turn-a-smiles-string-into-a-molecular-graph-for-pytorch-geometric/
+    NOT USED; https://www.blopig.com/blog/2022/02/how-to-turn-a-smiles-string-into-a-molecular-graph-for-pytorch-geometric/
 
     :param bond:
     :param use_stereochemistry:
