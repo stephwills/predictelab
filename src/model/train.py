@@ -18,7 +18,7 @@ from torch.nn import BCELoss
 from torch_geometric.loader import DataLoader
 
 
-def run_epoch(model, optim, train_dataloader, eval_dataloader, loss_fn=BCELoss()):
+def run_epoch(model, optim, train_dataloader, eval_dataloader, device, loss_fn=BCELoss()):
     """
 
     :param model:
@@ -32,24 +32,29 @@ def run_epoch(model, optim, train_dataloader, eval_dataloader, loss_fn=BCELoss()
     model.train()
 
     for i, data in enumerate(train_dataloader):  # for each batch
+        # print('epoch', i)
+        data = data.to(device)
         optim.zero_grad()  # delete old gradients
 
         y_true = data.y
         y_pred, _ = model(data.x, data.pos, data.edge_index, data.edge_attr)
 
         loss = loss_fn(y_pred, y_true)
-        epoch_train_losses.append(loss.detach().numpy())
+        epoch_train_losses.append(loss.item())
         loss.backward()
         optim.step()
 
+    epoch_val_losses = []
     with torch.no_grad():  # Calculate loss function for validation set
         model.eval()  # Set the model to eval mode
-        epoch_val_loss = np.mean([loss_fn(model(data.x, data.pos, data.edge_index, data.edge_attr)[0], data.y) for data in eval_dataloader])
+        for data in eval_dataloader:
+            data = data.to(device)
+            epoch_val_losses.append(loss_fn(model(data.x, data.pos, data.edge_index, data.edge_attr)[0], data.y).item())
 
-    return np.mean(epoch_train_losses), epoch_val_loss
+    return np.mean(epoch_train_losses), np.mean(epoch_val_losses)
 
 
-def test_eval(model, test_loader, loss_fn=BCELoss()):
+def test_eval(model, test_loader, device, loss_fn=BCELoss()):
     """
 
     :param model:
@@ -64,16 +69,18 @@ def test_eval(model, test_loader, loss_fn=BCELoss()):
 
     with torch.no_grad():  # Disable gradient calculation for evaluation
         for data in test_loader:
+            data = data.to(device)
             y_true = data.y
             y_pred, _ = model(data.x, data.pos, data.edge_index, data.edge_attr)
-            loss = loss_fn(y_pred, y_true)
-            test_losses.append(loss.detach().numpy())
+            loss = loss_fn(y_pred, y_true).item()
+            test_losses.append(loss)
 
             # Convert outputs to binary predictions
             predictions = (y_pred >= 0.5).float()
+            predictions = predictions.cpu().detach().numpy()
 
-            all_labels.append(y_true)
-            all_predictions.append(np.array(predictions))
+            all_labels.append(y_true.cpu().detach().numpy())
+            all_predictions.append(predictions)
 
     # Concatenate all labels and predictions from batches
     all_labels = np.concatenate(all_labels)
@@ -100,7 +107,7 @@ def test_eval(model, test_loader, loss_fn=BCELoss()):
 def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_size, n_cpus, hidden_nf, list_of_vectors=None, random_state=42, lr=1e-4,
          processed_dir=None, save_processed_files=None, model_dir=None, use_wandb=False, project_name='elab_egnn',
          prot_dist_threshold=8, intra_cutoff=2, inter_cutoff=10, mol_file_suffix='.mol', pdb_file_suffix='_receptor.pdb',
-         verbose=True, loss_fn=BCELoss()):
+         verbose=True, positive_weight=0.95, loss_fn=BCELoss()):
     """
 
     :param n_epochs:
@@ -140,6 +147,7 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
 
     # get device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print('Device:', device)
 
     # split data
     dataset = ElabDataset(lig_codes=lig_codes,
@@ -177,7 +185,7 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
     epochs_without_improvement = 0
 
     for epoch in range(n_epochs):
-        train_loss, val_loss = run_epoch(model, optim, train_dataloader, val_dataloader, loss_fn=loss_fn)
+        train_loss, val_loss = run_epoch(model, optim, train_dataloader, val_dataloader, device=device, loss_fn=loss_fn)
         train_losses.append(train_loss)
         val_losses.append(val_loss)
 
@@ -205,7 +213,7 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
                      'train_loss': train_loss,
                      'val_loss': val_loss})
 
-    avg_loss, accuracy, precision, recall, f1 = test_eval(model, test_dataloader, loss_fn=loss_fn)
+    avg_loss, accuracy, precision, recall, f1 = test_eval(model, test_dataloader, device, loss_fn=loss_fn)
 
     if use_wandb:
         run.log({'test': {'loss': avg_loss,
