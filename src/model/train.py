@@ -11,7 +11,7 @@ import wandb
 from sklearn.metrics import (accuracy_score, f1_score, precision_score,
                              recall_score)
 from sklearn.model_selection import train_test_split
-from src.dataset.dataset import ElabDataset
+from src.dataset.pyg_dataset import ElabDataset
 from src.model.egnn_clean import EGNN
 from torch import nn
 from torch.nn import BCELoss, BCEWithLogitsLoss
@@ -108,8 +108,7 @@ def test_eval(model, test_loader, device, loss_fn=BCEWithLogitsLoss):
 
 def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_size, n_cpus, hidden_nf, list_of_vectors=None, random_state=42, lr=1e-4,
          processed_dir=None, save_processed_files=None, model_dir=None, use_wandb=False, project_name='elab_egnn',
-         prot_dist_threshold=8, intra_cutoff=2, inter_cutoff=10, mol_file_suffix='.mol', pdb_file_suffix='_receptor.pdb',
-         verbose=True, loss_fn=BCEWithLogitsLoss):
+         prot_dist_threshold=8, intra_cutoff=2, inter_cutoff=10, verbose=True, loss_fn=BCEWithLogitsLoss):
     """
 
     :param n_epochs:
@@ -152,18 +151,20 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
     print('Device:', device)
 
     # split data
-    dataset = ElabDataset(lig_codes=lig_codes,
+    dataset = ElabDataset(root=None,
+                          lig_codes=lig_codes,
                           mol_files=mol_files,
                           pdb_files=pdb_files,
                           list_of_vectors=list_of_vectors,
                           prot_dist_threshold=prot_dist_threshold,
                           intra_cutoff=intra_cutoff,
                           inter_cutoff=inter_cutoff,
-                          mol_file_suffix=mol_file_suffix,
-                          pdb_file_suffix=pdb_file_suffix,
+                          # mol_file_suffix=mol_file_suffix,
+                          # pdb_file_suffix=pdb_file_suffix,
                           verbose=verbose,
                           processed_dir=processed_dir,
                           save_processed_files=save_processed_files)
+    dataset.load(dataset.processed_file_names[0])
     train, test = train_test_split(dataset, test_size=test_size, random_state=random_state)
     train, validation = train_test_split(train, test_size=test_size / 0.95, random_state=random_state)
 
@@ -249,8 +250,6 @@ def main():
     parser.add_argument('--prot_dist_threshold', type=float, default=config.PROT_DIST_THRESHOLD)
     parser.add_argument('--intra_cutoff', type=float, default=config.INTRA_CUTOFF)
     parser.add_argument('--inter_cutoff', type=float, default=config.INTER_CUTOFF)
-    parser.add_argument('--mol_file_suffix', default=config.MOL_FILE_SUFFIX)
-    parser.add_argument('--pdb_file_suffix', default=config.PDB_FILE_SUFFIX)
     parser.add_argument('--random_state', type=int, default=config.RANDOM_STATE)
     parser.add_argument('--lr', type=float, default=config.LR)
     args = parser.parse_args()
@@ -273,8 +272,7 @@ def main():
     train(args.n_epochs, args.patience, lig_codes, mol_files, pdb_files, args.batch_size, args.test_size, args.n_cpus,
           args.hidden_nf, list_of_vectors=None, random_state=args.random_state, lr=args.lr, processed_dir=args.processed_dir,
           save_processed_files=True, model_dir=args.model_dir, use_wandb=True, project_name=args.run_name, prot_dist_threshold=args.prot_dist_threshold,
-          intra_cutoff=args.intra_cutoff, inter_cutoff=args.inter_cutoff, mol_file_suffix=args.mol_file_suffix, pdb_file_suffix=args.pdb_file_suffix,
-          verbose=True)
+          intra_cutoff=args.intra_cutoff, inter_cutoff=args.inter_cutoff, verbose=True)
 
 
 if __name__ == "__main__":
