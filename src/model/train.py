@@ -14,11 +14,11 @@ from sklearn.model_selection import train_test_split
 from src.dataset.dataset import ElabDataset
 from src.model.egnn_clean import EGNN
 from torch import nn
-from torch.nn import BCELoss
-from torch_geometric.loader import DataLoader
+from torch.nn import BCELoss, BCEWithLogitsLoss
+from torch_geometric.loader import DataLoader, ImbalancedSampler
 
 
-def run_epoch(model, optim, train_dataloader, eval_dataloader, device, loss_fn=BCELoss()):
+def run_epoch(model, optim, train_dataloader, eval_dataloader, device, loss_fn=BCEWithLogitsLoss):
     """
 
     :param model:
@@ -38,7 +38,7 @@ def run_epoch(model, optim, train_dataloader, eval_dataloader, device, loss_fn=B
 
         y_true = data.y
         y_pred, _ = model(data.x, data.pos, data.edge_index, data.edge_attr)
-
+        loss_fn = BCEWithLogitsLoss()
         loss = loss_fn(y_pred, y_true)
         epoch_train_losses.append(loss.item())
         loss.backward()
@@ -49,12 +49,13 @@ def run_epoch(model, optim, train_dataloader, eval_dataloader, device, loss_fn=B
         model.eval()  # Set the model to eval mode
         for data in eval_dataloader:
             data = data.to(device)
+            loss_fn = BCEWithLogitsLoss()
             epoch_val_losses.append(loss_fn(model(data.x, data.pos, data.edge_index, data.edge_attr)[0], data.y).item())
 
     return np.mean(epoch_train_losses), np.mean(epoch_val_losses)
 
 
-def test_eval(model, test_loader, device, loss_fn=BCELoss()):
+def test_eval(model, test_loader, device, loss_fn=BCEWithLogitsLoss):
     """
 
     :param model:
@@ -72,6 +73,7 @@ def test_eval(model, test_loader, device, loss_fn=BCELoss()):
             data = data.to(device)
             y_true = data.y
             y_pred, _ = model(data.x, data.pos, data.edge_index, data.edge_attr)
+            loss_fn = BCEWithLogitsLoss()
             loss = loss_fn(y_pred, y_true).item()
             test_losses.append(loss)
 
@@ -107,7 +109,7 @@ def test_eval(model, test_loader, device, loss_fn=BCELoss()):
 def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_size, n_cpus, hidden_nf, list_of_vectors=None, random_state=42, lr=1e-4,
          processed_dir=None, save_processed_files=None, model_dir=None, use_wandb=False, project_name='elab_egnn',
          prot_dist_threshold=8, intra_cutoff=2, inter_cutoff=10, mol_file_suffix='.mol', pdb_file_suffix='_receptor.pdb',
-         verbose=True, positive_weight=0.95, loss_fn=BCELoss()):
+         verbose=True, loss_fn=BCEWithLogitsLoss):
     """
 
     :param n_epochs:
@@ -169,7 +171,7 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
     train_dataloader = DataLoader(train,
                                   batch_size=batch_size,
                                   shuffle=True,
-                                  num_workers=n_cpus)
+                                  num_workers=n_cpus,)
     val_dataloader = DataLoader(validation, batch_size=batch_size)
     test_dataloader = DataLoader(test, batch_size=batch_size)
 
