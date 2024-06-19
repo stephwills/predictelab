@@ -16,7 +16,7 @@ from src.model.egnn_clean import EGNN
 from torch import nn
 from torch.nn import BCELoss, BCEWithLogitsLoss
 from torch_geometric.loader import DataLoader, ImbalancedSampler
-
+from src.utils.utils import get_pos_weight
 
 def run_epoch(model, optim, train_dataloader, eval_dataloader, device, loss_fn=BCEWithLogitsLoss):
     """
@@ -37,8 +37,9 @@ def run_epoch(model, optim, train_dataloader, eval_dataloader, device, loss_fn=B
         optim.zero_grad()  # delete old gradients
 
         y_true = data.y
+        pos_weight = get_pos_weight(data)
         y_pred, _ = model(data.x, data.pos, data.edge_index, data.edge_attr)
-        loss_fn = BCEWithLogitsLoss()
+        loss_fn = BCEWithLogitsLoss(pos_weight=pos_weight)
         loss = loss_fn(y_pred, y_true)
         epoch_train_losses.append(loss.item())
         loss.backward()
@@ -73,12 +74,15 @@ def test_eval(model, test_loader, device, loss_fn=BCEWithLogitsLoss):
             data = data.to(device)
             y_true = data.y
             y_pred, _ = model(data.x, data.pos, data.edge_index, data.edge_attr)
+            print('true', sum(y_true))
+            # print(sum(y_pred))
             loss_fn = BCEWithLogitsLoss()
             loss = loss_fn(y_pred, y_true).item()
             test_losses.append(loss)
 
             # Convert outputs to binary predictions
             predictions = (y_pred >= 0.5).float()
+            print('pred', sum(predictions))
             predictions = predictions.cpu().detach().numpy()
 
             all_labels.append(y_true.cpu().detach().numpy())
