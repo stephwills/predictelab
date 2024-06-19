@@ -43,6 +43,7 @@ def get_ligand_coords(file, returnVectors=False):
         vectors = []
         if mol.HasProp('vectors'):
             vectors = mol.GetProp('vectors').split(',')
+            vectors = list(map(int, vectors))
         else:
             # print('No vectors for', file)
             vectors = []
