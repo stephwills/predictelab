@@ -292,6 +292,7 @@ def main():
     parser.add_argument('--inter_cutoff', type=float, default=config.INTER_CUTOFF)
     parser.add_argument('--random_state', type=int, default=config.RANDOM_STATE)
     parser.add_argument('--lr', type=float, default=config.LR)
+    parser.add_argument('--avg_loss_over_mols', action='store_true')
     args = parser.parse_args()
 
     # save arguments to model dir
@@ -312,7 +313,7 @@ def main():
     train(args.n_epochs, args.patience, lig_codes, mol_files, pdb_files, args.batch_size, args.test_size, args.n_cpus,
           args.hidden_nf, list_of_vectors=None, random_state=args.random_state, lr=args.lr, processed_dir=args.processed_dir,
           save_processed_files=True, model_dir=args.model_dir, use_wandb=True, project_name=args.run_name, prot_dist_threshold=args.prot_dist_threshold,
-          intra_cutoff=args.intra_cutoff, inter_cutoff=args.inter_cutoff, verbose=True)
+          intra_cutoff=args.intra_cutoff, inter_cutoff=args.inter_cutoff, verbose=True, avg_loss_over_mols=args.avg_loss_over_mols)
 
 
 if __name__ == "__main__":
