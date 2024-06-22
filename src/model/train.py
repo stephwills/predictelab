@@ -219,7 +219,7 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
     in_node_nf = 44
     out_node_nf = 1
     in_edge_nf = 3
-    model = EGNN(in_node_nf, hidden_nf, out_node_nf, in_edge_nf, device, act_fn=nn.Softmax())
+    model = EGNN(in_node_nf, hidden_nf, out_node_nf, in_edge_nf, device, act_fn=nn.SiLU())
 
     # get optim
     optim = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
