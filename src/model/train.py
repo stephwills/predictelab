@@ -14,11 +14,12 @@ from sklearn.model_selection import train_test_split
 from src.dataset.pyg_dataset import ElabDataset
 from src.model.egnn_clean import EGNN
 from torch import nn
-from torch.nn import BCELoss, BCEWithLogitsLoss
-from torch_geometric.loader import DataLoader, ImbalancedSampler
-from src.utils.utils import get_pos_weight
+from torch.nn import BCELoss
+from torch_geometric.loader import DataLoader
+from src.utils.utils import get_pos_weight, mask_avg
 
-def run_epoch(model, optim, train_dataloader, eval_dataloader, device, loss_fn=BCEWithLogitsLoss):
+def run_epoch(model, optim, train_dataloader, eval_dataloader, device, loss_fn=BCELoss,
+              avg_loss_over_mols=False):
     """
 
     :param model:
@@ -36,27 +37,52 @@ def run_epoch(model, optim, train_dataloader, eval_dataloader, device, loss_fn=B
         data = data.to(device)
         optim.zero_grad()  # delete old gradients
 
-        y_true = data.y
-        pos_weight = get_pos_weight(data)
-        y_pred, _ = model(data.x, data.pos, data.edge_index, data.edge_attr)
-        loss_fn = BCEWithLogitsLoss(pos_weight=pos_weight)
-        loss = loss_fn(y_pred, y_true)
-        epoch_train_losses.append(loss.item())
-        loss.backward()
-        optim.step()
+        if avg_loss_over_mols:
+            index = data.batch
+            y_true = data.y
+            y_pred, _ = model(data.x, data.pos, data.edge_index, data.edge_attr)
+            pos_weight = get_pos_weight(y_true, is_y=True)
+            loss_fn = BCELoss(weight=pos_weight, reduction='none')
+            losses = loss_fn(y_pred, y_true)
+            losses = torch.flatten(losses)
+            avg_losses = mask_avg(losses, index)
+            loss = torch.mean(avg_losses)
+            epoch_train_losses.append(loss.item())
+            loss.backward()
+            optim.step()
+        else:
+            y_true = data.y
+            pos_weight = get_pos_weight(data)
+            y_pred, _ = model(data.x, data.pos, data.edge_index, data.edge_attr)
+            loss_fn = BCELoss(weight=pos_weight)
+            loss = loss_fn(y_pred, y_true)
+            epoch_train_losses.append(loss.item())
+            loss.backward()
+            optim.step()
 
     epoch_val_losses = []
     with torch.no_grad():  # Calculate loss function for validation set
         model.eval()  # Set the model to eval mode
         for data in eval_dataloader:
             data = data.to(device)
-            loss_fn = BCEWithLogitsLoss()
-            epoch_val_losses.append(loss_fn(model(data.x, data.pos, data.edge_index, data.edge_attr)[0], data.y).item())
+            if avg_loss_over_mols:
+                index = data.batch
+                loss_fn = BCELoss(reduction='none')
+                y_pred, _ = model(data.x, data.pos, data.edge_index, data.edge_attr)
+                losses = loss_fn(y_pred, data.y)
+                losses = torch.flatten(losses)
+                avg_losses = mask_avg(losses, index)
+                loss = torch.mean(avg_losses)
+                epoch_val_losses.append(loss.item())
+
+            else:
+                loss_fn = BCELoss()
+                epoch_val_losses.append(loss_fn(model(data.x, data.pos, data.edge_index, data.edge_attr)[0], data.y).item())
 
     return np.mean(epoch_train_losses), np.mean(epoch_val_losses)
 
 
-def test_eval(model, test_loader, device, loss_fn=BCEWithLogitsLoss):
+def test_eval(model, test_loader, device, loss_fn=BCELoss, avg_loss_over_mols=False):
     """
 
     :param model:
@@ -71,18 +97,26 @@ def test_eval(model, test_loader, device, loss_fn=BCEWithLogitsLoss):
 
     with torch.no_grad():  # Disable gradient calculation for evaluation
         for data in test_loader:
+
             data = data.to(device)
             y_true = data.y
             y_pred, _ = model(data.x, data.pos, data.edge_index, data.edge_attr)
-            print('true', sum(y_true))
-            # print(sum(y_pred))
-            loss_fn = BCEWithLogitsLoss()
-            loss = loss_fn(y_pred, y_true).item()
-            test_losses.append(loss)
 
-            # Convert outputs to binary predictions
+            if not avg_loss_over_mols:
+                loss_fn = BCELoss()
+                loss = loss_fn(y_pred, y_true).item()
+                test_losses.append(loss)
+
+            else:
+                index = data.batch
+                loss_fn = BCELoss(reduction='none')
+                losses = loss_fn(y_pred, data.y)
+                losses = torch.flatten(losses)
+                avg_losses = mask_avg(losses, index)
+                loss = torch.mean(avg_losses)
+                test_losses.append(loss.item())
+
             predictions = (y_pred >= 0.5).float()
-            print('pred', sum(predictions))
             predictions = predictions.cpu().detach().numpy()
 
             all_labels.append(y_true.cpu().detach().numpy())
@@ -112,7 +146,7 @@ def test_eval(model, test_loader, device, loss_fn=BCEWithLogitsLoss):
 
 def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_size, n_cpus, hidden_nf, list_of_vectors=None, random_state=42, lr=1e-4,
          processed_dir=None, save_processed_files=None, model_dir=None, use_wandb=False, project_name='elab_egnn',
-         prot_dist_threshold=8, intra_cutoff=2, inter_cutoff=10, verbose=True, loss_fn=BCEWithLogitsLoss):
+         prot_dist_threshold=8, intra_cutoff=2, inter_cutoff=10, verbose=True, loss_fn=BCELoss, avg_loss_over_mols=False):
     """
 
     :param n_epochs:
@@ -185,14 +219,15 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
     in_node_nf = 44
     out_node_nf = 1
     in_edge_nf = 3
-    model = EGNN(in_node_nf, hidden_nf, out_node_nf, in_edge_nf, device, act_fn=nn.Sigmoid())
+    model = EGNN(in_node_nf, hidden_nf, out_node_nf, in_edge_nf, device, act_fn=nn.Softmax())
 
     # get optim
     optim = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     epochs_without_improvement = 0
 
     for epoch in range(n_epochs):
-        train_loss, val_loss = run_epoch(model, optim, train_dataloader, val_dataloader, device=device, loss_fn=loss_fn)
+        train_loss, val_loss = run_epoch(model, optim, train_dataloader, val_dataloader, device=device, loss_fn=loss_fn,
+                                         avg_loss_over_mols=avg_loss_over_mols)
         train_losses.append(train_loss)
         val_losses.append(val_loss)
 
@@ -220,7 +255,8 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
                      'train_loss': train_loss,
                      'val_loss': val_loss})
 
-    avg_loss, accuracy, precision, recall, f1 = test_eval(model, test_dataloader, device, loss_fn=loss_fn)
+    avg_loss, accuracy, precision, recall, f1 = test_eval(model, test_dataloader, device, loss_fn=loss_fn,
+                                                          avg_loss_over_mols=avg_loss_over_mols)
 
     if use_wandb:
         run.log({'test': {'loss': avg_loss,
