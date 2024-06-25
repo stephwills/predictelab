@@ -19,12 +19,12 @@ from src.utils.utils import get_pos_weight, loss_from_avg
 
 # to store loss and activation functions
 loss_functions = {'BCEWithLogitsLoss': nn.BCEWithLogitsLoss,
-                  'BCELoss': nn.BCELoss}
+                  'BCELoss': nn.BCELoss}  #TODO: change weight calc if want BCELoss?
 act_functions = {'SiLU': nn.SiLU}
 
 
 def run_epoch(model, optim, train_dataloader, eval_dataloader, device, loss_fn='BCEWithLogitsLoss',
-              avg_loss_over_mols=False):
+              avg_loss_over_mols=False, pos_weight=0):
     """
 
     :param model:
@@ -51,7 +51,6 @@ def run_epoch(model, optim, train_dataloader, eval_dataloader, device, loss_fn='
             index = data.batch
             y_true = data.y
             out, _ = model(data.x, data.pos, data.edge_index, data.edge_attr)
-            pos_weight = get_pos_weight(y_true, is_y=True)
 
             if loss_fn == 'BCEWithLogitsLoss':
                 loss_function_weighted = loss_function_init(pos_weight=pos_weight, reduction='none')
@@ -73,7 +72,6 @@ def run_epoch(model, optim, train_dataloader, eval_dataloader, device, loss_fn='
 
         else:
             y_true = data.y
-            pos_weight = get_pos_weight(data)
             out, _ = model(data.x, data.pos, data.edge_index, data.edge_attr)
 
             if loss_fn == 'BCEWithLogitsLoss':
@@ -252,6 +250,11 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
                           save_processed_files=save_processed_files)
     dataset.load(dataset.processed_file_names[0])
 
+    # get weight for loss calc
+    ys = dataset.y
+    pos_weight = get_pos_weight(ys, is_y=True)
+    print('pos weight', pos_weight)
+
     # split data into train, test and validation sets
     train, test = train_test_split(dataset, test_size=test_size, random_state=random_state)
     train, validation = train_test_split(train, test_size=test_size / 0.95, random_state=random_state)
@@ -277,7 +280,7 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
     train_losses, val_losses, train_losses_notweighted = [], [], []
     for epoch in range(n_epochs):
         train_loss, val_loss, train_loss_notweighted = run_epoch(model, optim, train_dataloader, val_dataloader,
-                                         device=device, loss_fn=loss_fn, avg_loss_over_mols=avg_loss_over_mols)
+                                         device=device, loss_fn=loss_fn, avg_loss_over_mols=avg_loss_over_mols, pos_weight=pos_weight)
         train_losses.append(train_loss)
         val_losses.append(val_loss)
         train_losses_notweighted.append(train_loss_notweighted)
