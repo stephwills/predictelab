@@ -15,7 +15,7 @@ from src.dataset.pyg_dataset import ElabDataset
 from src.model.egnn_clean import EGNN
 from torch import nn
 from torch_geometric.loader import DataLoader
-from src.utils.utils import get_pos_weight, mask_avg
+from src.utils.utils import get_pos_weight, loss_from_avg
 
 # to store loss and activation functions
 loss_functions = {'BCEWithLogitsLoss': nn.BCEWithLogitsLoss,
@@ -42,7 +42,7 @@ def run_epoch(model, optim, train_dataloader, eval_dataloader, device, loss_fn='
 
     # train the model
     model.train()
-    epoch_train_losses = []
+    epoch_train_losses, epoch_train_losses_notweighted = [], []
     for i, data in enumerate(train_dataloader):
         data = data.to(device)
         optim.zero_grad()  # delete old gradients
@@ -60,11 +60,16 @@ def run_epoch(model, optim, train_dataloader, eval_dataloader, device, loss_fn='
                 loss_function_weighted = loss_function_init(weight=pos_weight, reduction='none')
 
             losses = torch.flatten(loss_function_weighted(out, y_true))
-            avg_losses = mask_avg(losses, index)
-            loss = torch.mean(avg_losses)
+            loss, loss_item = loss_from_avg(losses, index)
             epoch_train_losses.append(loss.item())
             loss.backward()
             optim.step()
+
+            # also record loss without applying weight
+            loss_function_notweighted = loss_function_init(reduction='none')
+            losses_notweighted = torch.flatten(loss_function_notweighted(out, y_true))
+            _, loss_notweighted = loss_from_avg(losses_notweighted, index)
+            epoch_train_losses_notweighted.append(loss_notweighted)
 
         else:
             y_true = data.y
@@ -82,6 +87,11 @@ def run_epoch(model, optim, train_dataloader, eval_dataloader, device, loss_fn='
             loss.backward()
             optim.step()
 
+            # also record loss without applying weight
+            loss_function_notweighted = loss_function_init()
+            loss_notweighted = loss_function_notweighted(out, y_true)
+            epoch_train_losses_notweighted.append(loss_notweighted.item())
+
     # calculate loss function for validation set
     epoch_val_losses = []
     with torch.no_grad():
@@ -96,9 +106,8 @@ def run_epoch(model, optim, train_dataloader, eval_dataloader, device, loss_fn='
                 if 'loss_fn' == 'BCELoss':
                     out = sigmoid(out)
                 losses = torch.flatten(loss_function_notweighted(out, data.y))
-                avg_losses = mask_avg(losses, index)
-                loss = torch.mean(avg_losses)
-                epoch_val_losses.append(loss.item())
+                _, loss = loss_from_avg(losses, index)
+                epoch_val_losses.append(loss)
 
             else:
                 loss_function_notweighted = loss_function_init()
@@ -108,7 +117,7 @@ def run_epoch(model, optim, train_dataloader, eval_dataloader, device, loss_fn='
                 loss = loss_function_notweighted(out, data.y).item()
                 epoch_val_losses.append(loss)
 
-    return np.mean(epoch_train_losses), np.mean(epoch_val_losses)
+    return np.mean(epoch_train_losses), np.mean(epoch_val_losses), np.mean(epoch_train_losses_notweighted)
 
 
 def test_eval(model, test_loader, device, loss_fn='BCEWithLogitsLoss', avg_loss_over_mols=False):
@@ -151,9 +160,8 @@ def test_eval(model, test_loader, device, loss_fn='BCEWithLogitsLoss', avg_loss_
                     losses = torch.flatten(loss_function(out_sigmoid, data.y))
                 if loss_fn == 'BCEWithLogitsLoss':
                     losses = torch.flatten(loss_function(out, data.y))
-                avg_losses = mask_avg(losses, index)
-                loss = torch.mean(avg_losses)
-                test_losses.append(loss.item())
+                _, loss = loss_from_avg(losses, index)
+                test_losses.append(loss)
 
             predictions = (out_sigmoid >= 0.5).float()
             all_probabilities.append(out_sigmoid.cpu().detach().numpy())
@@ -266,12 +274,13 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
     epochs_without_improvement = 0
 
     # run training
-    train_losses, val_losses = [], []
+    train_losses, val_losses, train_losses_notweighted = [], [], []
     for epoch in range(n_epochs):
-        train_loss, val_loss = run_epoch(model, optim, train_dataloader, val_dataloader,
+        train_loss, val_loss, train_loss_notweighted = run_epoch(model, optim, train_dataloader, val_dataloader,
                                          device=device, loss_fn=loss_fn, avg_loss_over_mols=avg_loss_over_mols)
         train_losses.append(train_loss)
         val_losses.append(val_loss)
+        train_losses_notweighted.append(train_loss_notweighted)
 
         if np.min(val_losses) == val_loss:
             torch.save(model.state_dict(), os.path.join(model_dir, "best_model"))
@@ -290,11 +299,12 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
             torch.save(model.state_dict(), os.path.join(model_dir, "previous_weights"))
             torch.save(optim.state_dict(), os.path.join(model_dir, "previous_optim"))
 
-        print("{:6.2f} | {:6.2f}".format(train_loss, val_loss))
+        print("train {:6.4f} | train (no w) {:6.4f} | val {:6.4f}".format(train_loss, train_loss_notweighted, val_loss))
 
         if use_wandb:
             run.log({'epoch': epoch,
                      'train_loss': train_loss,
+                     'train_loss_noweight': train_loss_notweighted,
                      'val_loss': val_loss})
 
     avg_loss, accuracy, precision, recall, f1, probabilities = test_eval(model, test_dataloader, device,
