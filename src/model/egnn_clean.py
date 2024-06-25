@@ -132,7 +132,6 @@ class EGNN(nn.Module):
         self.n_layers = n_layers
         self.embedding_in = nn.Linear(in_node_nf, self.hidden_nf)
         self.embedding_out = nn.Linear(self.hidden_nf, out_node_nf)
-        self.out_act = torch.nn.Sigmoid()
         for i in range(0, n_layers):
             self.add_module("gcl_%d" % i, E_GCL(self.hidden_nf, self.hidden_nf, self.hidden_nf, edges_in_d=in_edge_nf,
                                                 act_fn=act_fn, residual=residual, attention=attention,
@@ -144,7 +143,6 @@ class EGNN(nn.Module):
         for i in range(0, self.n_layers):
             h, x, _ = self._modules["gcl_%d" % i](h, edges, x, edge_attr=edge_attr)
         h = self.embedding_out(h)
-        h = self.out_act(h)  # changed by steph
         return h, x
 
 

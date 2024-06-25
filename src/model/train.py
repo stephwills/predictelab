@@ -14,11 +14,16 @@ from sklearn.model_selection import train_test_split
 from src.dataset.pyg_dataset import ElabDataset
 from src.model.egnn_clean import EGNN
 from torch import nn
-from torch.nn import BCELoss
 from torch_geometric.loader import DataLoader
 from src.utils.utils import get_pos_weight, mask_avg
 
-def run_epoch(model, optim, train_dataloader, eval_dataloader, device, loss_fn=BCELoss,
+# to store loss and activation functions
+loss_functions = {'BCEWithLogitsLoss': nn.BCEWithLogitsLoss,
+                  'BCELoss': nn.BCELoss}
+act_functions = {'SiLU': nn.SiLU}
+
+
+def run_epoch(model, optim, train_dataloader, eval_dataloader, device, loss_fn='BCEWithLogitsLoss',
               avg_loss_over_mols=False):
     """
 
@@ -26,107 +31,141 @@ def run_epoch(model, optim, train_dataloader, eval_dataloader, device, loss_fn=B
     :param optim:
     :param train_dataloader:
     :param eval_dataloader:
+    :param device:
     :param loss_fn:
+    :param avg_loss_over_mols:
     :return:
     """
-    epoch_train_losses = []
-    model.train()
+    # retrieve loss function
+    loss_function_init = loss_functions[loss_fn]
+    sigmoid = nn.Sigmoid()
 
-    for i, data in enumerate(train_dataloader):  # for each batch
-        # print('epoch', i)
+    # train the model
+    model.train()
+    epoch_train_losses = []
+    for i, data in enumerate(train_dataloader):
         data = data.to(device)
         optim.zero_grad()  # delete old gradients
 
         if avg_loss_over_mols:
             index = data.batch
             y_true = data.y
-            y_pred, _ = model(data.x, data.pos, data.edge_index, data.edge_attr)
+            out, _ = model(data.x, data.pos, data.edge_index, data.edge_attr)
             pos_weight = get_pos_weight(y_true, is_y=True)
-            loss_fn = BCELoss(weight=pos_weight, reduction='none')
-            losses = loss_fn(y_pred, y_true)
-            losses = torch.flatten(losses)
+
+            if loss_fn == 'BCEWithLogitsLoss':
+                loss_function_weighted = loss_function_init(pos_weight=pos_weight, reduction='none')
+            if loss_fn == 'BCELoss':
+                out = sigmoid(out)
+                loss_function_weighted = loss_function_init(weight=pos_weight, reduction='none')
+
+            losses = torch.flatten(loss_function_weighted(out, y_true))
             avg_losses = mask_avg(losses, index)
             loss = torch.mean(avg_losses)
             epoch_train_losses.append(loss.item())
             loss.backward()
             optim.step()
+
         else:
             y_true = data.y
             pos_weight = get_pos_weight(data)
-            y_pred, _ = model(data.x, data.pos, data.edge_index, data.edge_attr)
-            loss_fn = BCELoss(weight=pos_weight)
-            loss = loss_fn(y_pred, y_true)
+            out, _ = model(data.x, data.pos, data.edge_index, data.edge_attr)
+
+            if loss_fn == 'BCEWithLogitsLoss':
+                loss_function_weighted = loss_function_init(pos_weight=pos_weight)
+            if loss_fn == 'BCELoss':
+                out = sigmoid(out)
+                loss_function_weighted = loss_function_init(weight=pos_weight)
+
+            loss = loss_function_weighted(out, y_true)
             epoch_train_losses.append(loss.item())
             loss.backward()
             optim.step()
 
+    # calculate loss function for validation set
     epoch_val_losses = []
-    with torch.no_grad():  # Calculate loss function for validation set
-        model.eval()  # Set the model to eval mode
+    with torch.no_grad():
+        model.eval()  # set the model to eval mode
         for data in eval_dataloader:
             data = data.to(device)
+
             if avg_loss_over_mols:
+                loss_function_notweighted = loss_function_init(reduction='none')
                 index = data.batch
-                loss_fn = BCELoss(reduction='none')
-                y_pred, _ = model(data.x, data.pos, data.edge_index, data.edge_attr)
-                losses = loss_fn(y_pred, data.y)
-                losses = torch.flatten(losses)
+                out, _ = model(data.x, data.pos, data.edge_index, data.edge_attr)
+                if 'loss_fn' == 'BCELoss':
+                    out = sigmoid(out)
+                losses = torch.flatten(loss_function_notweighted(out, data.y))
                 avg_losses = mask_avg(losses, index)
                 loss = torch.mean(avg_losses)
                 epoch_val_losses.append(loss.item())
 
             else:
-                loss_fn = BCELoss()
-                epoch_val_losses.append(loss_fn(model(data.x, data.pos, data.edge_index, data.edge_attr)[0], data.y).item())
+                loss_function_notweighted = loss_function_init()
+                out, _ = model(data.x, data.pos, data.edge_index, data.edge_attr)
+                if 'loss_fn' == 'BCELoss':
+                    out = sigmoid(out)
+                loss = loss_function_notweighted(out, data.y).item()
+                epoch_val_losses.append(loss)
 
     return np.mean(epoch_train_losses), np.mean(epoch_val_losses)
 
 
-def test_eval(model, test_loader, device, loss_fn=BCELoss, avg_loss_over_mols=False):
+def test_eval(model, test_loader, device, loss_fn='BCEWithLogitsLoss', avg_loss_over_mols=False):
     """
 
     :param model:
     :param test_loader:
+    :param device:
     :param loss_fn:
+    :param avg_loss_over_mols:
     :return:
     """
+    # retrieve loss function
+    sigmoid = nn.Sigmoid()
+    loss_function_init = loss_functions[loss_fn]
+
     model.eval()  # Set the model to evaluation mode
-    test_losses = []
-    all_labels = []
-    all_predictions = []
+    test_losses, all_labels, all_predictions, all_probabilities = [], [], [], []
 
-    with torch.no_grad():  # Disable gradient calculation for evaluation
+    with torch.no_grad():  # disable gradient calculation for evaluation
+
         for data in test_loader:
-
             data = data.to(device)
             y_true = data.y
-            y_pred, _ = model(data.x, data.pos, data.edge_index, data.edge_attr)
+            out, _ = model(data.x, data.pos, data.edge_index, data.edge_attr)
+            out_sigmoid = sigmoid(out)
 
             if not avg_loss_over_mols:
-                loss_fn = BCELoss()
-                loss = loss_fn(y_pred, y_true).item()
+                loss_function = loss_function_init()
+                if loss_fn == 'BCELoss':
+                    loss = loss_function(out_sigmoid, y_true).item()
+                if loss_fn == 'BCEWithLogitsLoss':
+                    loss = loss_function(out, y_true).item()
                 test_losses.append(loss)
 
             else:
                 index = data.batch
-                loss_fn = BCELoss(reduction='none')
-                losses = loss_fn(y_pred, data.y)
-                losses = torch.flatten(losses)
+                loss_function = loss_function_init(reduction='none')
+                if loss_fn == 'BCELoss':
+                    losses = torch.flatten(loss_function(out_sigmoid, data.y))
+                if loss_fn == 'BCEWithLogitsLoss':
+                    losses = torch.flatten(loss_function(out, data.y))
                 avg_losses = mask_avg(losses, index)
                 loss = torch.mean(avg_losses)
                 test_losses.append(loss.item())
 
-            predictions = (y_pred >= 0.5).float()
-            predictions = predictions.cpu().detach().numpy()
-
+            predictions = (out_sigmoid >= 0.5).float()
+            all_probabilities.append(out_sigmoid.cpu().detach().numpy())
             all_labels.append(y_true.cpu().detach().numpy())
-            all_predictions.append(predictions)
+            all_predictions.append(predictions.cpu().detach().numpy())
 
-    # Concatenate all labels and predictions from batches
+    # concatenate all labels and predictions from batches
     all_labels = np.concatenate(all_labels)
     all_predictions = np.concatenate(all_predictions)
+    all_probabilities = np.concatenate(all_probabilities)
 
-    # Calculate metrics
+    # calculate metrics
     accuracy = accuracy_score(all_labels, all_predictions)
     precision = precision_score(all_labels, all_predictions)
     recall = recall_score(all_labels, all_predictions)
@@ -141,22 +180,25 @@ def test_eval(model, test_loader, device, loss_fn=BCELoss, avg_loss_over_mols=Fa
     print(f"Recall: {recall:.4f}")
     print(f"F1 Score: {f1:.4f}")
 
-    return avg_loss, accuracy, precision, recall, f1
+    return avg_loss, accuracy, precision, recall, f1, all_probabilities
 
 
-def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_size, n_cpus, hidden_nf, list_of_vectors=None, random_state=42, lr=1e-4,
-         processed_dir=None, save_processed_files=None, model_dir=None, use_wandb=False, project_name='elab_egnn',
-         prot_dist_threshold=8, intra_cutoff=2, inter_cutoff=10, verbose=True, loss_fn=BCELoss, avg_loss_over_mols=False):
+def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_size, n_cpus, hidden_nf,
+          list_of_vectors=None, random_state=42, lr=1e-4, processed_dir=None, save_processed_files=None, model_dir=None,
+          use_wandb=False, project_name='elab_egnn', prot_dist_threshold=8, intra_cutoff=2, inter_cutoff=10,
+          verbose=True, avg_loss_over_mols=False, act_fn=nn.SiLU, loss_fn='BCEWithLogitsLoss'):
     """
 
     :param n_epochs:
     :param patience:
-    :param data_dir:
+    :param lig_codes:
+    :param mol_files:
+    :param pdb_files:
     :param batch_size:
     :param test_size:
     :param n_cpus:
     :param hidden_nf:
-    :param lig_codes:
+    :param list_of_vectors:
     :param random_state:
     :param lr:
     :param processed_dir:
@@ -167,9 +209,9 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
     :param prot_dist_threshold:
     :param intra_cutoff:
     :param inter_cutoff:
-    :param mol_file_suffix:
-    :param pdb_file_suffix:
     :param verbose:
+    :param avg_loss_over_mols:
+    :param act_fn:
     :param loss_fn:
     :return:
     """
@@ -188,7 +230,7 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print('Device:', device)
 
-    # split data
+    # load dataset object and run processing (if necessary)
     dataset = ElabDataset(root=None,
                           lig_codes=lig_codes,
                           mol_files=mol_files,
@@ -197,37 +239,37 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
                           prot_dist_threshold=prot_dist_threshold,
                           intra_cutoff=intra_cutoff,
                           inter_cutoff=inter_cutoff,
-                          # mol_file_suffix=mol_file_suffix,
-                          # pdb_file_suffix=pdb_file_suffix,
                           verbose=verbose,
                           processed_dir=processed_dir,
                           save_processed_files=save_processed_files)
     dataset.load(dataset.processed_file_names[0])
+
+    # split data into train, test and validation sets
     train, test = train_test_split(dataset, test_size=test_size, random_state=random_state)
     train, validation = train_test_split(train, test_size=test_size / 0.95, random_state=random_state)
 
-    # create dataloader
-    train_dataloader = DataLoader(train,
-                                  batch_size=batch_size,
-                                  shuffle=True,
-                                  num_workers=n_cpus,)
+    # create dataloader objects
+    train_dataloader = DataLoader(train, batch_size=batch_size, shuffle=True, num_workers=n_cpus,)
     val_dataloader = DataLoader(validation, batch_size=batch_size)
     test_dataloader = DataLoader(test, batch_size=batch_size)
 
-    train_losses, val_losses = [], []
+    # get num of node and edge features
+    in_node_nf = dataset[0].x.shape[1]
+    out_node_nf = dataset[0].y.shape[1]
+    in_edge_nf = dataset[0].edge_attr.shape[1]
 
-    in_node_nf = 44
-    out_node_nf = 1
-    in_edge_nf = 3
-    model = EGNN(in_node_nf, hidden_nf, out_node_nf, in_edge_nf, device, act_fn=nn.SiLU())
+    # initialise model
+    model = EGNN(in_node_nf, hidden_nf, out_node_nf, in_edge_nf, device, act_fn=act_fn())
 
-    # get optim
+    # get optimizer
     optim = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     epochs_without_improvement = 0
 
+    # run training
+    train_losses, val_losses = [], []
     for epoch in range(n_epochs):
-        train_loss, val_loss = run_epoch(model, optim, train_dataloader, val_dataloader, device=device, loss_fn=loss_fn,
-                                         avg_loss_over_mols=avg_loss_over_mols)
+        train_loss, val_loss = run_epoch(model, optim, train_dataloader, val_dataloader,
+                                         device=device, loss_fn=loss_fn, avg_loss_over_mols=avg_loss_over_mols)
         train_losses.append(train_loss)
         val_losses.append(val_loss)
 
@@ -240,8 +282,8 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
         else:
             break
 
-        if train_loss > 1.5 * np.min(
-                train_losses):  # EGNNs are quite unstable, this reverts the model to a previous state if an epoch blows up
+        # EGNNs are quite unstable, this reverts the model to a previous state if an epoch blows up
+        if train_loss > 1.5 * np.min(train_losses):
             model.load_state_dict(torch.load(os.path.join(model_dir, "previous_weights"), map_location=torch.device(device)))
             optim.load_state_dict(torch.load(os.path.join(model_dir, "previous_optim"), map_location=torch.device(device)))
         if train_loss == np.min(train_losses):
@@ -255,15 +297,17 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
                      'train_loss': train_loss,
                      'val_loss': val_loss})
 
-    avg_loss, accuracy, precision, recall, f1 = test_eval(model, test_dataloader, device, loss_fn=loss_fn,
-                                                          avg_loss_over_mols=avg_loss_over_mols)
+    avg_loss, accuracy, precision, recall, f1, probabilities = test_eval(model, test_dataloader, device,
+                                                                        loss_fn=loss_fn, avg_loss_over_mols=avg_loss_over_mols)
+
+    np.save(os.path.join(model_dir, 'test_set_probabilities.npy'), probabilities)
 
     if use_wandb:
         run.log({'test': {'loss': avg_loss,
                           'accuracy': accuracy,
                           'precision': precision,
-                           'recall': recall,
-                           'f1': f1}})
+                          'recall': recall,
+                          'f1': f1}})
 
     if use_wandb:
         run.finish()
@@ -293,6 +337,10 @@ def main():
     parser.add_argument('--random_state', type=int, default=config.RANDOM_STATE)
     parser.add_argument('--lr', type=float, default=config.LR)
     parser.add_argument('--avg_loss_over_mols', action='store_true')
+    parser.add_argument('--loss_function', default='BCEWithLogitsLoss', choices=['BCEWithLogitsLoss', 'BCELoss'])
+    parser.add_argument('--act_function', default='SiLU', choices=['SiLU'])
+    parser.add_argument('--use_wandb', action='store_true')
+    parser.add_argument('--verbose', action='store_true')
     args = parser.parse_args()
 
     # save arguments to model dir
@@ -302,18 +350,37 @@ def main():
     with open(os.path.join(args.model_dir, f"{args.run_name}-arguments.json"), "w") as f:
         json.dump(args_dict, f)
 
-    # read in a dictionary containing the ligand codes and fnames of data to process
-    # TODO: consider data may be processed already
+    # read in fnames from json file
     with open(args.data_json, "r") as f:
         data = json.load(f)
     lig_codes, mol_files, pdb_files = data['lig_codes'], data['mol_files'], data['pdb_files']
     mol_files = [os.path.join(args.precursor_dir, file) for file in mol_files]
     pdb_files = [os.path.join(args.pdb_dir, file) for file in pdb_files]
 
-    train(args.n_epochs, args.patience, lig_codes, mol_files, pdb_files, args.batch_size, args.test_size, args.n_cpus,
-          args.hidden_nf, list_of_vectors=None, random_state=args.random_state, lr=args.lr, processed_dir=args.processed_dir,
-          save_processed_files=True, model_dir=args.model_dir, use_wandb=True, project_name=args.run_name, prot_dist_threshold=args.prot_dist_threshold,
-          intra_cutoff=args.intra_cutoff, inter_cutoff=args.inter_cutoff, verbose=True, avg_loss_over_mols=args.avg_loss_over_mols)
+    train(n_epochs=args.n_epochs,
+          patience=args.patience,
+          lig_codes=lig_codes,
+          mol_files=mol_files,
+          pdb_files=pdb_files,
+          batch_size=args.batch_size,
+          test_size=args.test_size,
+          n_cpus=args.n_cpus,
+          hidden_nf=args.hidden_nf,
+          list_of_vectors=None,
+          random_state=args.random_state,
+          lr=args.lr,
+          processed_dir=args.processed_dir,
+          save_processed_files=True,
+          model_dir=args.model_dir,
+          use_wandb=args.use_Wandb,
+          project_name=args.run_name,
+          prot_dist_threshold=args.prot_dist_threshold,
+          intra_cutoff=args.intra_cutoff,
+          inter_cutoff=args.inter_cutoff,
+          verbose=args.verbose,
+          avg_loss_over_mols=args.avg_loss_over_mols,
+          act_fn=act_functions[args.act_function],
+          loss_fn=args.loss_function)
 
 
 if __name__ == "__main__":
