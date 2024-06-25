@@ -52,7 +52,7 @@ def mask_avg(src, index):
     uniq_elements, counts = torch.unique(index, return_counts=True)
     n_indices = uniq_elements.numel()
     added = torch.zeros(n_indices, dtype=src.dtype)
-    added = torch.scatter(added, dim=0, index=index, src=src)
+    added = torch.scatter_add(added, dim=0, index=index, src=src)
     return added / counts
 
 
