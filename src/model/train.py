@@ -398,7 +398,7 @@ def main():
           processed_dir=args.processed_dir,
           save_processed_files=True,
           model_dir=args.model_dir,
-          use_wandb=args.use_Wandb,
+          use_wandb=args.use_wandb,
           project_name=args.run_name,
           prot_dist_threshold=args.prot_dist_threshold,
           intra_cutoff=args.intra_cutoff,
