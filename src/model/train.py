@@ -191,7 +191,6 @@ def test_eval(model, test_loader, device, loss_fn='BCEWithLogitsLoss', avg_loss_
     print(f"Precision: {precision:.4f}")
     print(f"Recall: {recall:.4f}")
     print(f"F1 Score: {f1:.4f}")
-    print(f"Perc mol successes: {mol_successes:.4f}")
 
     return avg_loss, accuracy, precision, recall, f1, all_probabilities, mol_successes, perc_vectors_found
 
@@ -257,14 +256,14 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
                           save_processed_files=save_processed_files)
     dataset.load(dataset.processed_file_names[0])
 
-    # get weight for loss calc
-    ys = dataset.y
-    pos_weight = get_pos_weight(ys, is_y=True)
-    print('pos weight', pos_weight)
-
     # split data into train, test and validation sets
     train, test = train_test_split(dataset, test_size=test_size, random_state=random_state)
     train, validation = train_test_split(train, test_size=test_size / 0.95, random_state=random_state)
+
+    # get weight for loss calc
+    ys = train.y
+    pos_weight = get_pos_weight(ys, is_y=True)
+    print('pos weight', pos_weight)
 
     # create dataloader objects
     train_dataloader = DataLoader(train, batch_size=batch_size, shuffle=True, num_workers=n_cpus,)
