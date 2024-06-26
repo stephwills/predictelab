@@ -168,7 +168,7 @@ def get_edges(ligand_coords, protein_coords, intra_cutoff=2.0, inter_cutoff=10.0
 
 
 def convert_to_graph(mol_file, pdb, prot_dist_threshold=8, intra_cutoff=2.0, inter_cutoff=10.0, vectors=None,
-                     vectors_are_molprop=False):
+                     vectors_are_molprop=False, return_node_info=False):
     """
     Given a file for the ligand and a separate apo file for the protein, create input graph to GNN. Considers only
     'pocket atoms' within a specified distance of a ligand atom. Edges are decided according to distance between atoms
@@ -219,4 +219,13 @@ def convert_to_graph(mol_file, pdb, prot_dist_threshold=8, intra_cutoff=2.0, int
     x = torch.tensor(x, dtype=torch.float)
 
     edge_index, edge_attr = get_edges(lig_coords, prot_coords, intra_cutoff, inter_cutoff)
+
+    # for visualizing predictions
+    if return_node_info:
+        lig_mask = [1] * len(lig_vectors) + [0] * len(prot_vectors)  # whether part of ligand
+        atom_idxs = lig_idxs + select_prot_idxs  # record atom idxs for nodes
+        lig_mask = torch.tensor(lig_mask)
+        atom_idxs = torch.tensor(atom_idxs)
+        return h, y, x, edge_index, edge_attr, lig_mask, atom_idxs
+
     return h, y, x, edge_index, edge_attr

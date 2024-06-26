@@ -15,7 +15,7 @@ from src.dataset.pyg_dataset import ElabDataset
 from src.model.egnn_clean import EGNN
 from torch import nn
 from torch_geometric.loader import DataLoader
-from src.utils.utils import get_pos_weight, loss_from_avg
+from src.utils.utils import get_pos_weight, loss_from_avg, score_mol_success_for_batch
 
 # to store loss and activation functions
 loss_functions = {'BCEWithLogitsLoss': nn.BCEWithLogitsLoss,
@@ -133,7 +133,7 @@ def test_eval(model, test_loader, device, loss_fn='BCEWithLogitsLoss', avg_loss_
     loss_function_init = loss_functions[loss_fn]
 
     model.eval()  # Set the model to evaluation mode
-    test_losses, all_labels, all_predictions, all_probabilities = [], [], [], []
+    test_losses, all_labels, all_predictions, all_probabilities, successes, perc_vectors_found = [], [], [], [], [], []
 
     with torch.no_grad():  # disable gradient calculation for evaluation
 
@@ -161,6 +161,9 @@ def test_eval(model, test_loader, device, loss_fn='BCEWithLogitsLoss', avg_loss_
                 _, loss = loss_from_avg(losses, index)
                 test_losses.append(loss)
 
+            succ, perc_found = score_mol_success_for_batch(data.batch, y_true, out_sigmoid)
+            successes.extend(succ)
+            perc_vectors_found.extend(perc_found)
             predictions = (out_sigmoid >= 0.5).float()
             all_probabilities.append(out_sigmoid.cpu().detach().numpy())
             all_labels.append(y_true.cpu().detach().numpy())
@@ -180,13 +183,17 @@ def test_eval(model, test_loader, device, loss_fn='BCEWithLogitsLoss', avg_loss_
     # Calculate average loss
     avg_loss = np.mean(test_losses)
 
+    # calculate mol successes
+    mol_successes = (sum(successes)/len(successes)) * 100
+
     print(f"Test Loss: {avg_loss:.4f}")
     print(f"Accuracy: {accuracy:.4f}")
     print(f"Precision: {precision:.4f}")
     print(f"Recall: {recall:.4f}")
     print(f"F1 Score: {f1:.4f}")
+    print(f"Perc mol successes: {mol_successes:.4f}")
 
-    return avg_loss, accuracy, precision, recall, f1, all_probabilities
+    return avg_loss, accuracy, precision, recall, f1, all_probabilities, mol_successes, perc_vectors_found
 
 
 def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_size, n_cpus, hidden_nf,
@@ -310,17 +317,20 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
                      'train_loss_noweight': train_loss_notweighted,
                      'val_loss': val_loss})
 
-    avg_loss, accuracy, precision, recall, f1, probabilities = test_eval(model, test_dataloader, device,
+    avg_loss, accuracy, precision, recall, f1, probabilities, mol_successes, perc_vectors_found = test_eval(model, test_dataloader, device,
                                                                         loss_fn=loss_fn, avg_loss_over_mols=avg_loss_over_mols)
 
     np.save(os.path.join(model_dir, 'test_set_probabilities.npy'), probabilities)
+    with open(os.path.join(model_dir, 'test_set_perc_vectors_found.json'), 'w') as f:
+        json.dump(perc_vectors_found, f)
 
     if use_wandb:
         run.log({'test': {'loss': avg_loss,
                           'accuracy': accuracy,
                           'precision': precision,
                           'recall': recall,
-                          'f1': f1}})
+                          'f1': f1,
+                          'perc_mol_successes': mol_successes}})
 
     if use_wandb:
         run.finish()
