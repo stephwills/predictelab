@@ -366,6 +366,9 @@ def main():
     parser.add_argument('--verbose', action='store_true')
     args = parser.parse_args()
 
+    if not os.path.exists(args.model_dir):
+        os.mkdir(args.model_dir)
+
     # save arguments to model dir
     args_dict = vars(args)
     print('ARGUMENTS:')
