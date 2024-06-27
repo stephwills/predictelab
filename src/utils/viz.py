@@ -7,11 +7,11 @@ from Bio.PDB.PDBIO import PDBIO
 from rdkit import Chem
 
 
-def process_for_viz(pdb_file, lig_sdf, probabilities, lig_mask, atom_idxs, target_file):
+def process_for_viz(pdb_file, mol_file, probabilities, lig_mask, atom_idxs, target_file):
     """
 
     :param pdb_file:
-    :param lig_sdf:
+    :param mol_file:
     :param probabilities:
     :param lig_mask:
     :param atom_idxs:
@@ -40,8 +40,14 @@ def process_for_viz(pdb_file, lig_sdf, probabilities, lig_mask, atom_idxs, targe
 
     # process ligand
     # convert ligand sdf to pdb
-    lig = Chem.AddHs(Chem.SDMolSupplier(lig_sdf)[0], addCoords=True)
-    tmp_file = os.path.join('/tmp', os.path.basename(lig_sdf).replace('.sdf', '.pdb'))
+    if '.sdf' in os.path.basename(mol_file):
+        ext = '.sdf'
+        lig = Chem.AddHs(Chem.SDMolSupplier(mol_file)[0], addCoords=True)
+    if '.mol' in os.path.basename(mol_file):
+        ext = '.mol'
+        lig = Chem.AddHs(Chem.MolFromMolFile(mol_file)[0], addCoords=True)
+
+    tmp_file = os.path.join('/tmp', os.path.basename(mol_file).replace(ext, '.pdb'))
     Chem.MolToPDBFile(lig, tmp_file)
 
     structure2 = parser.get_structure('lig', tmp_file)
@@ -68,21 +74,72 @@ def process_for_viz(pdb_file, lig_sdf, probabilities, lig_mask, atom_idxs, targe
     structure1[0].add(ligand_chain)
     io.set_structure(structure1)
     io.save(target_file)
-
     os.remove(tmp_file)
 
 
-def read_data_from_npz(file, lig_code):
+def data_from_dict(data_dict, lig_code):
     """
+    Get rel data for creating viz
+
+    :param data_dict:
+    :param lig_code:
+    :return:
+    """
+    lig_mask = data_dict[lig_code]['lig_mask']
+    atom_idxs = data_dict[lig_code]['atom_idxs']
+    probs = data_dict[lig_code]['probs']
+    return lig_mask, atom_idxs, probs
+
+
+def data_dict_from_npz(file):
+    """
+    Read npz file
 
     :param file:
-    :param lig_code:
     :return:
     """
     data = np.load(file, allow_pickle=True)
     file = data.files[0]
     data_dict = data[file].item()
-    lig_mask = data_dict[lig_code]['lig_mask']
-    atom_idxs = data_dict[lig_code]['atom_idxs']
-    probs = data_dict[lig_code]['probs']
-    return lig_mask, atom_idxs, probs
+    return data_dict
+
+
+def main():
+    """
+
+    :return:
+    """
+    import json
+    from argparse import ArgumentParser
+    parser = ArgumentParser()
+    parser.add_argument('--precursor_dir')
+    parser.add_argument('--pdb_dir')
+    parser.add_argument('--data_json', help='contains the names of all the mol and pdb files')
+    parser.add_argument('--npz_file', help='the test_set_visualization.npz file saved by train.py')
+    parser.add_argument('--output_dir')
+    args = parser.parse_args()
+
+    if not os.path.exists(args.output_dir):
+        os.mkdir(args.output_dir)
+
+    with open(args.data_json, "r") as f:
+        data = json.load(f)
+    lig_codes, mol_files, pdb_files = data['lig_codes'], data['mol_files'], data['pdb_files']
+
+    mol_files = [os.path.join(args.precursor_dir, file) for file in mol_files]
+    pdb_files = [os.path.join(args.pdb_dir, file) for file in pdb_files]
+
+    data_dict = data_dict_from_npz(args.npz_file)
+    test_lig_codes = list(data_dict.keys())
+    test_lig_codes.sort()
+
+    for test_lig_code in test_lig_codes:
+        lig_mask, atom_idxs, probs = data_from_dict(data_dict, test_lig_code)
+        lig_idx = lig_codes.index(test_lig_code)
+        mol_file, pdb_file = mol_files[lig_idx], pdb_files[lig_idx]
+        target_file = os.path.join(args.output_dir, f"{test_lig_code}_viz.pdb")
+        process_for_viz(pdb_file, mol_file, probs, lig_mask, atom_idxs, target_file)
+
+
+if __name__ == "__main__":
+    main()
