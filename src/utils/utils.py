@@ -14,8 +14,20 @@ def generate_fnames_from_dir(dir):
     return lig_codes, mol_files, receptor_files
 
 
+def get_pos_weight_from_train(train):
+    """
+
+    :param train:
+    :return:
+    """
+    num_0s = sum([(data.y == 0).sum() for data in train]).item()
+    num_1s = sum([(data.y).sum() for data in train]).item()
+    return torch.tensor(num_0s / num_1s, dtype=torch.float64)
+
+
 def get_pos_weight(data, is_y=False):
     """
+    Not used
 
     :param data:
     :param is_y:

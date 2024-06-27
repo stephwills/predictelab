@@ -15,7 +15,7 @@ from src.dataset.pyg_dataset import ElabDataset
 from src.model.egnn_clean import EGNN
 from torch import nn
 from torch_geometric.loader import DataLoader
-from src.utils.utils import get_pos_weight, loss_from_avg, score_mol_success_for_batch
+from src.utils.utils import get_pos_weight_from_train, loss_from_avg, score_mol_success_for_batch
 
 # to store loss and activation functions
 loss_functions = {'BCEWithLogitsLoss': nn.BCEWithLogitsLoss,
@@ -172,7 +172,7 @@ def test_eval(model, test_loader, device, loss_fn='BCEWithLogitsLoss', avg_loss_
     # concatenate all labels and predictions from batches
     all_labels = np.concatenate(all_labels)
     all_predictions = np.concatenate(all_predictions)
-    all_probabilities = np.concatenate(all_probabilities)
+    all_probabilities = np.array(all_probabilities)  # so we can index later
 
     # calculate metrics
     accuracy = accuracy_score(all_labels, all_predictions)
@@ -261,14 +261,14 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
     train, validation = train_test_split(train, test_size=test_size / 0.95, random_state=random_state)
 
     # get weight for loss calc
-    ys = train.y
-    pos_weight = get_pos_weight(ys, is_y=True)
-    print('pos weight', pos_weight)
 
     # create dataloader objects
     train_dataloader = DataLoader(train, batch_size=batch_size, shuffle=True, num_workers=n_cpus,)
     val_dataloader = DataLoader(validation, batch_size=batch_size)
     test_dataloader = DataLoader(test, batch_size=batch_size)
+
+    pos_weight = get_pos_weight_from_train(train)
+    print('pos weight', pos_weight)
 
     # get num of node and edge features
     in_node_nf = dataset[0].x.shape[1]
@@ -333,6 +333,21 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
 
     if use_wandb:
         run.finish()
+
+    # if we want to save visualization
+    viz_dict = {}
+    for i, graph in enumerate(test):
+        lig_code = graph.lig_code
+        lig_mask = graph.lig_mask.cpu().detach().numpy()
+        atom_idxs = graph.atom_idxs.cpu().detach().numpy()
+        probs = probabilities[i]
+
+        viz_dict[lig_code] = {'lig_mask': lig_mask,
+                              'atom_idxs': atom_idxs,
+                              'probs': probs}
+
+    # print(viz_dict)
+    np.savez(os.path.join(model_dir, 'test_set_visualization.npy'), **viz_dict)
 
 
 def main():
