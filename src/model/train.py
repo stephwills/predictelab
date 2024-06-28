@@ -161,18 +161,20 @@ def test_eval(model, test_loader, device, loss_fn='BCEWithLogitsLoss', avg_loss_
                 _, loss = loss_from_avg(losses, index)
                 test_losses.append(loss)
 
-            succ, perc_found = score_mol_success_for_batch(data.batch, y_true, out_sigmoid)
+            succ, perc_found, probabilities_split = score_mol_success_for_batch(data.batch, y_true, out_sigmoid)
             successes.extend(succ)
             perc_vectors_found.extend(perc_found)
             predictions = (out_sigmoid >= 0.5).float()
-            all_probabilities.append(out_sigmoid.cpu().detach().numpy())
+            for probs in probabilities_split:
+                probs = probs.flatten()
+                all_probabilities.append(probs.cpu().detach().numpy())
+
             all_labels.append(y_true.cpu().detach().numpy())
             all_predictions.append(predictions.cpu().detach().numpy())
 
     # concatenate all labels and predictions from batches
     all_labels = np.concatenate(all_labels)
     all_predictions = np.concatenate(all_predictions)
-    all_probabilities = np.array(all_probabilities)  # so we can index later
 
     # calculate metrics
     accuracy = accuracy_score(all_labels, all_predictions)
@@ -319,11 +321,11 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
     avg_loss, accuracy, precision, recall, f1, probabilities, mol_successes, perc_vectors_found = test_eval(model, test_dataloader, device,
                                                                         loss_fn=loss_fn, avg_loss_over_mols=avg_loss_over_mols)
 
-    np.save(os.path.join(model_dir, 'test_set_probabilities.npy'), probabilities)
     with open(os.path.join(model_dir, 'test_set_perc_vectors_found.json'), 'w') as f:
         json.dump(perc_vectors_found, f)
 
     if use_wandb:
+        print('logging test')
         run.log({'test': {'loss': avg_loss,
                           'accuracy': accuracy,
                           'precision': precision,
@@ -331,8 +333,6 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
                           'f1': f1,
                           'perc_mol_successes': mol_successes}})
 
-    if use_wandb:
-        run.finish()
 
     # if we want to save visualization
     viz_dict = {}
@@ -349,6 +349,9 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
     # print(viz_dict)
     np.savez(os.path.join(model_dir, 'test_set_visualization.npy'), **viz_dict)
 
+    if use_wandb:
+        print('finish')
+        run.finish()
 
 def main():
     """

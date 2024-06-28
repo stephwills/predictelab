@@ -115,7 +115,6 @@ def score_mol_success_for_batch(batch, y_true, probabilities, quantile=0.9):
     y_true_split = mask_split(y_true, batch)
     for probs, y_true in zip(probs_split, y_true_split):
         res, perc = score_mol_success(y_true, probs, quantile)
-        # print('mol success', res, perc)
         successes.append(res)
         perc_found.append(perc)
-    return successes, perc_found
+    return successes, perc_found, probs_split
