@@ -14,15 +14,20 @@ def generate_fnames_from_dir(dir):
     return lig_codes, mol_files, receptor_files
 
 
-def get_pos_weight_from_train(train):
+def get_pos_weight_from_train(train, lig_only=False):
     """
 
     :param train:
     :return:
     """
-    num_0s = sum([(data.y == 0).sum() for data in train]).item()
-    num_1s = sum([(data.y).sum() for data in train]).item()
-    return torch.tensor(num_0s / num_1s, dtype=torch.float64)
+    if not lig_only:
+        num_0s = sum([(data.y == 0).sum() for data in train]).item()
+        num_1s = sum([(data.y).sum() for data in train]).item()
+        return torch.tensor(num_0s / num_1s, dtype=torch.float64)
+    else:
+        num_0s = sum([(mask_split(data.y, data.lig_mask)[1] == 0).sum() for data in train]).item()
+        num_1s = sum([(mask_split(data.y, data.lig_mask)[1]).sum() for data in train]).item()
+        return torch.tensor(num_0s / num_1s, dtype=torch.float64)
 
 
 def get_pos_weight(data, is_y=False):
@@ -54,6 +59,13 @@ def mask_split(tensor, indices):
 
 
 def rearrange_tensor_for_lig(losses, index, mol_index):
+    """
+
+    :param losses:
+    :param index:
+    :param mol_index:
+    :return:
+    """
     split_losses = mask_split(losses, index)
     split_idxs = mask_split(index, index)
     split_mol_idxs = mask_split(mol_index, index)
@@ -64,7 +76,6 @@ def rearrange_tensor_for_lig(losses, index, mol_index):
     for split_loss, split_idx, split_mol_idx in zip(split_losses, split_idxs, split_mol_idxs):
         lig_losses = mask_split(split_loss, split_mol_idx)[1]
         lig_idx = mask_split(split_idx, split_mol_idx)[1]
-        #lig_losses_all.extend(lig_losses)
         lig_losses_all = torch.cat((lig_losses_all, lig_losses))
         index_all.extend(lig_idx)
 
@@ -126,7 +137,7 @@ def score_mol_success_for_batch(data, y_true, probabilities, quantile=0.9, type_
     :param y_true:
     :param probabilities:
     :param quantile:
-    :return:
+    :return:7
     """
     batch = data.batch
     mol_index = data.lig_mask

@@ -190,7 +190,10 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
     val_dataloader = DataLoader(validation, batch_size=batch_size)
     test_dataloader = DataLoader(test, batch_size=batch_size)
 
-    pos_weight = get_pos_weight_from_train(train)
+    if loss_type == 'avg_over_mol':
+        pos_weight = get_pos_weight_from_train(train, lig_only=True)
+    else:
+        pos_weight = get_pos_weight_from_train(train)
     print('pos weight', pos_weight)
 
     # get num of node and edge features
