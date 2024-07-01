@@ -5,7 +5,13 @@ import numpy as np
 from Bio.PDB import PDBParser
 from Bio.PDB.PDBIO import PDBIO
 from rdkit import Chem
+from tqdm import tqdm
 
+
+possible_chain_ids = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H',
+                      'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P',
+                      'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X',
+                      'Y', 'Z']
 
 def process_for_viz(pdb_file, mol_file, probabilities, lig_mask, atom_idxs, target_file):
     """
@@ -25,7 +31,7 @@ def process_for_viz(pdb_file, mol_file, probabilities, lig_mask, atom_idxs, targ
     prot_atoms = [x for x in structure1.get_atoms()]
 
     prot_probs_ordered = []
-    prot_probabilities = [prob[0] for prob, mask in zip(probabilities, lig_mask) if mask != 1]
+    prot_probabilities = [prob for prob, mask in zip(probabilities, lig_mask) if mask != 1]
     prot_idxs = [idx for idx, mask in zip(atom_idxs, lig_mask) if mask != 1]
 
     for idx in range(len(prot_atoms)):
@@ -54,7 +60,7 @@ def process_for_viz(pdb_file, mol_file, probabilities, lig_mask, atom_idxs, targ
     lig_atoms = [x for x in structure2.get_atoms()]
 
     lig_probs_ordered = []
-    lig_probabilities = [prob[0] for prob, mask in zip(probabilities, lig_mask) if mask == 1]
+    lig_probabilities = [prob for prob, mask in zip(probabilities, lig_mask) if mask == 1]
     lig_idxs = [idx for idx, mask in zip(atom_idxs, lig_mask) if mask == 1]
 
     for idx in range(len(lig_atoms)):
@@ -69,7 +75,9 @@ def process_for_viz(pdb_file, mol_file, probabilities, lig_mask, atom_idxs, targ
 
     io = PDBIO()
     ligand_chain = list(structure2.get_chains())[0]
-    ligand_chain.id = 'L'
+    existing_chain_ids = [chain.id for model in structure1 for chain in model]
+    chain_id = [id for id in possible_chain_ids if id not in existing_chain_ids]
+    ligand_chain.id = chain_id[0]
     ligand_chain.detach_parent()
     structure1[0].add(ligand_chain)
     io.set_structure(structure1)
@@ -77,7 +85,7 @@ def process_for_viz(pdb_file, mol_file, probabilities, lig_mask, atom_idxs, targ
     os.remove(tmp_file)
 
 
-def data_from_dict(data_dict, lig_code):
+def data_from_dict(data, lig_code):
     """
     Get rel data for creating viz
 
@@ -85,13 +93,14 @@ def data_from_dict(data_dict, lig_code):
     :param lig_code:
     :return:
     """
-    lig_mask = data_dict[lig_code]['lig_mask']
-    atom_idxs = data_dict[lig_code]['atom_idxs']
-    probs = data_dict[lig_code]['probs']
+    data_dict = data[lig_code].item()
+    lig_mask = data_dict['lig_mask']
+    atom_idxs = data_dict['atom_idxs']
+    probs = data_dict['probs']
     return lig_mask, atom_idxs, probs
 
 
-def data_dict_from_npz(file):
+def lig_codes_from_npz(file):
     """
     Read npz file
 
@@ -99,16 +108,21 @@ def data_dict_from_npz(file):
     :return:
     """
     data = np.load(file, allow_pickle=True)
-    file = data.files[0]
-    data_dict = data[file].item()
-    return data_dict
+    files = data.files
+    return files, data
+    # data_dict = data[file].item()
+    # print(len(data_dict))
+    # print(data_dict.keys())
+    # return data_dict
 
 
 def main():
     """
+    If want to process files for visualization separate from training model
 
     :return:
     """
+    # TODO: do this in the actual pipeline rather than separately
     import json
     from argparse import ArgumentParser
     parser = ArgumentParser()
@@ -129,12 +143,12 @@ def main():
     mol_files = [os.path.join(args.precursor_dir, file) for file in mol_files]
     pdb_files = [os.path.join(args.pdb_dir, file) for file in pdb_files]
 
-    data_dict = data_dict_from_npz(args.npz_file)
-    test_lig_codes = list(data_dict.keys())
+    test_lig_codes, data = lig_codes_from_npz(args.npz_file)
+    # print(test_lig_codes)
     test_lig_codes.sort()
 
-    for test_lig_code in test_lig_codes:
-        lig_mask, atom_idxs, probs = data_from_dict(data_dict, test_lig_code)
+    for test_lig_code in tqdm(test_lig_codes):
+        lig_mask, atom_idxs, probs = data_from_dict(data, test_lig_code)
         lig_idx = lig_codes.index(test_lig_code)
         mol_file, pdb_file = mol_files[lig_idx], pdb_files[lig_idx]
         target_file = os.path.join(args.output_dir, f"{test_lig_code}_viz.pdb")
