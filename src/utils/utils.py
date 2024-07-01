@@ -53,6 +53,24 @@ def mask_split(tensor, indices):
     return [tensor[indices == i] for i in unique]
 
 
+def rearrange_tensor_for_lig(losses, index, mol_index):
+    split_losses = mask_split(losses, index)
+    split_idxs = mask_split(index, index)
+    split_mol_idxs = mask_split(mol_index, index)
+
+    lig_losses_all = torch.tensor([])
+    index_all = []
+
+    for split_loss, split_idx, split_mol_idx in zip(split_losses, split_idxs, split_mol_idxs):
+        lig_losses = mask_split(split_loss, split_mol_idx)[1]
+        lig_idx = mask_split(split_idx, split_mol_idx)[1]
+        #lig_losses_all.extend(lig_losses)
+        lig_losses_all = torch.cat((lig_losses_all, lig_losses))
+        index_all.extend(lig_idx)
+
+    return lig_losses_all, torch.tensor(index_all)
+
+
 def mask_avg(src, index):
     """
     Get avg according to index

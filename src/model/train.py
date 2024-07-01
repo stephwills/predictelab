@@ -6,25 +6,21 @@ import os
 from argparse import ArgumentParser
 
 import numpy as np
-import torch
 import wandb
 from sklearn.metrics import (accuracy_score, f1_score, precision_score,
                              recall_score)
 from sklearn.model_selection import train_test_split
 from src.dataset.pyg_dataset import ElabDataset
 from src.model.egnn_clean import EGNN
-from torch import nn
 from torch_geometric.loader import DataLoader
-from src.utils.utils import get_pos_weight_from_train, loss_from_avg, score_mol_success_for_batch
+from src.utils.utils import get_pos_weight_from_train, score_mol_success_for_batch
+from src.model.loss import *
 
-# to store loss and activation functions
-loss_functions = {'BCEWithLogitsLoss': nn.BCEWithLogitsLoss,
-                  'BCELoss': nn.BCELoss}  #TODO: change weight calc if want BCELoss?
 act_functions = {'SiLU': nn.SiLU}
 
 
 def run_epoch(model, optim, train_dataloader, eval_dataloader, device, loss_fn='BCEWithLogitsLoss',
-              avg_loss_over_mols=False, pos_weight=0):
+              pos_weight=None, loss_type='no_avg'):
     """
 
     :param model:
@@ -33,12 +29,12 @@ def run_epoch(model, optim, train_dataloader, eval_dataloader, device, loss_fn='
     :param eval_dataloader:
     :param device:
     :param loss_fn:
-    :param avg_loss_over_mols:
+    :param pos_weight:
+    :param loss_type:
     :return:
     """
     # retrieve loss function
     loss_function_init = loss_functions[loss_fn]
-    sigmoid = nn.Sigmoid()
 
     # train the model
     model.train()
@@ -46,49 +42,12 @@ def run_epoch(model, optim, train_dataloader, eval_dataloader, device, loss_fn='
     for i, data in enumerate(train_dataloader):
         data = data.to(device)
         optim.zero_grad()  # delete old gradients
-
-        if avg_loss_over_mols:
-            index = data.batch
-            y_true = data.y
-            out, _ = model(data.x, data.pos, data.edge_index, data.edge_attr)
-
-            if loss_fn == 'BCEWithLogitsLoss':
-                loss_function_weighted = loss_function_init(pos_weight=pos_weight, reduction='none')
-            if loss_fn == 'BCELoss':
-                out = sigmoid(out)
-                loss_function_weighted = loss_function_init(weight=pos_weight, reduction='none')
-
-            losses = torch.flatten(loss_function_weighted(out, y_true))
-            loss, loss_item = loss_from_avg(losses, index)
-            epoch_train_losses.append(loss.item())
-            loss.backward()
-            optim.step()
-
-            # also record loss without applying weight
-            loss_function_notweighted = loss_function_init(reduction='none')
-            losses_notweighted = torch.flatten(loss_function_notweighted(out, y_true))
-            _, loss_notweighted = loss_from_avg(losses_notweighted, index)
-            epoch_train_losses_notweighted.append(loss_notweighted)
-
-        else:
-            y_true = data.y
-            out, _ = model(data.x, data.pos, data.edge_index, data.edge_attr)
-
-            if loss_fn == 'BCEWithLogitsLoss':
-                loss_function_weighted = loss_function_init(pos_weight=pos_weight)
-            if loss_fn == 'BCELoss':
-                out = sigmoid(out)
-                loss_function_weighted = loss_function_init(weight=pos_weight)
-
-            loss = loss_function_weighted(out, y_true)
-            epoch_train_losses.append(loss.item())
-            loss.backward()
-            optim.step()
-
-            # also record loss without applying weight
-            loss_function_notweighted = loss_function_init()
-            loss_notweighted = loss_function_notweighted(out, y_true)
-            epoch_train_losses_notweighted.append(loss_notweighted.item())
+        loss = get_loss(data, loss_fn, pos_weight, loss_type, model)
+        loss_not_weighted = get_loss(data, loss_fn, None, loss_type, model)
+        epoch_train_losses.append(loss.item())
+        epoch_train_losses_notweighted.append(loss_not_weighted.item())
+        loss.backward()
+        optim.step()
 
     # calculate loss function for validation set
     epoch_val_losses = []
@@ -96,42 +55,22 @@ def run_epoch(model, optim, train_dataloader, eval_dataloader, device, loss_fn='
         model.eval()  # set the model to eval mode
         for data in eval_dataloader:
             data = data.to(device)
-
-            if avg_loss_over_mols:
-                loss_function_notweighted = loss_function_init(reduction='none')
-                index = data.batch
-                out, _ = model(data.x, data.pos, data.edge_index, data.edge_attr)
-                if 'loss_fn' == 'BCELoss':
-                    out = sigmoid(out)
-                losses = torch.flatten(loss_function_notweighted(out, data.y))
-                _, loss = loss_from_avg(losses, index)
-                epoch_val_losses.append(loss)
-
-            else:
-                loss_function_notweighted = loss_function_init()
-                out, _ = model(data.x, data.pos, data.edge_index, data.edge_attr)
-                if 'loss_fn' == 'BCELoss':
-                    out = sigmoid(out)
-                loss = loss_function_notweighted(out, data.y).item()
-                epoch_val_losses.append(loss)
+            val_loss = get_loss(data, loss_fn, None, loss_type, model)
+            epoch_val_losses.append(val_loss.item())
 
     return np.mean(epoch_train_losses), np.mean(epoch_val_losses), np.mean(epoch_train_losses_notweighted)
 
 
-def test_eval(model, test_loader, device, loss_fn='BCEWithLogitsLoss', avg_loss_over_mols=False):
+def test_eval(model, test_loader, device, loss_fn='BCEWithLogitsLoss', loss_type='no_avg'):
     """
 
     :param model:
     :param test_loader:
     :param device:
     :param loss_fn:
-    :param avg_loss_over_mols:
+    :param loss_type:
     :return:
     """
-    # retrieve loss function
-    sigmoid = nn.Sigmoid()
-    loss_function_init = loss_functions[loss_fn]
-
     model.eval()  # Set the model to evaluation mode
     test_losses, all_labels, all_predictions, all_probabilities, successes, perc_vectors_found = [], [], [], [], [], []
 
@@ -139,28 +78,10 @@ def test_eval(model, test_loader, device, loss_fn='BCEWithLogitsLoss', avg_loss_
 
         for data in test_loader:
             data = data.to(device)
-            y_true = data.y
-            out, _ = model(data.x, data.pos, data.edge_index, data.edge_attr)
-            out_sigmoid = sigmoid(out)
+            test_loss, out_sigmoid, y_true = get_loss(data, loss_fn, None, loss_type, model, return_out=True)
+            test_losses.append(test_loss.item())
 
-            if not avg_loss_over_mols:
-                loss_function = loss_function_init()
-                if loss_fn == 'BCELoss':
-                    loss = loss_function(out_sigmoid, y_true).item()
-                if loss_fn == 'BCEWithLogitsLoss':
-                    loss = loss_function(out, y_true).item()
-                test_losses.append(loss)
-
-            else:
-                index = data.batch
-                loss_function = loss_function_init(reduction='none')
-                if loss_fn == 'BCELoss':
-                    losses = torch.flatten(loss_function(out_sigmoid, data.y))
-                if loss_fn == 'BCEWithLogitsLoss':
-                    losses = torch.flatten(loss_function(out, data.y))
-                _, loss = loss_from_avg(losses, index)
-                test_losses.append(loss)
-
+            # TODO: ========================== ADAPT ==========================
             succ, perc_found, probabilities_split = score_mol_success_for_batch(data.batch, y_true, out_sigmoid)
             successes.extend(succ)
             perc_vectors_found.extend(perc_found)
@@ -200,7 +121,7 @@ def test_eval(model, test_loader, device, loss_fn='BCEWithLogitsLoss', avg_loss_
 def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_size, n_cpus, hidden_nf,
           list_of_vectors=None, random_state=42, lr=1e-4, processed_dir=None, save_processed_files=None, model_dir=None,
           use_wandb=False, project_name='elab_egnn', prot_dist_threshold=8, intra_cutoff=2, inter_cutoff=10,
-          verbose=True, avg_loss_over_mols=False, act_fn=nn.SiLU, loss_fn='BCEWithLogitsLoss'):
+          verbose=True, act_fn=nn.SiLU, loss_fn='BCEWithLogitsLoss', loss_type='no_avg'):
     """
 
     :param n_epochs:
@@ -288,7 +209,8 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
     train_losses, val_losses, train_losses_notweighted = [], [], []
     for epoch in range(n_epochs):
         train_loss, val_loss, train_loss_notweighted = run_epoch(model, optim, train_dataloader, val_dataloader,
-                                         device=device, loss_fn=loss_fn, avg_loss_over_mols=avg_loss_over_mols, pos_weight=pos_weight)
+                                         device=device, loss_fn=loss_fn, pos_weight=pos_weight,
+                                         loss_type=loss_type)
         train_losses.append(train_loss)
         val_losses.append(val_loss)
         train_losses_notweighted.append(train_loss_notweighted)
@@ -319,7 +241,7 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
                      'val_loss': val_loss})
 
     avg_loss, accuracy, precision, recall, f1, probabilities, mol_successes, perc_vectors_found = test_eval(model, test_dataloader, device,
-                                                                        loss_fn=loss_fn, avg_loss_over_mols=avg_loss_over_mols)
+                                                                        loss_fn=loss_fn, loss_type=loss_type)
 
     with open(os.path.join(model_dir, 'test_set_perc_vectors_found.json'), 'w') as f:
         json.dump(perc_vectors_found, f)
@@ -376,7 +298,7 @@ def main():
     parser.add_argument('--inter_cutoff', type=float, default=config.INTER_CUTOFF)
     parser.add_argument('--random_state', type=int, default=config.RANDOM_STATE)
     parser.add_argument('--lr', type=float, default=config.LR)
-    parser.add_argument('--avg_loss_over_mols', action='store_true')
+    parser.add_argument('--loss_type', default='no_avg', choices=['no_avg', 'avg_over_graph', 'avg_over_mol'])
     parser.add_argument('--loss_function', default='BCEWithLogitsLoss', choices=['BCEWithLogitsLoss', 'BCELoss'])
     parser.add_argument('--act_function', default='SiLU', choices=['SiLU'])
     parser.add_argument('--use_wandb', action='store_true')
@@ -421,7 +343,7 @@ def main():
           intra_cutoff=args.intra_cutoff,
           inter_cutoff=args.inter_cutoff,
           verbose=args.verbose,
-          avg_loss_over_mols=args.avg_loss_over_mols,
+          loss_type=args.loss_type,
           act_fn=act_functions[args.act_function],
           loss_fn=args.loss_function)
 
