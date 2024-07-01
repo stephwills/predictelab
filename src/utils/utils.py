@@ -118,7 +118,7 @@ def score_mol_success(y_true, probabilities, quantile=0.9):
         return False, num_correct/num_poss
 
 
-def score_mol_success_for_batch(batch, y_true, probabilities, quantile=0.9):
+def score_mol_success_for_batch(data, y_true, probabilities, quantile=0.9, type_calc='avg_over_mol'):
     """
     score_mol_success but over a batch
 
@@ -128,7 +128,15 @@ def score_mol_success_for_batch(batch, y_true, probabilities, quantile=0.9):
     :param quantile:
     :return:
     """
+    batch = data.batch
+    mol_index = data.lig_mask
     successes, perc_found = [], []
+
+    if type_calc == 'avg_over_mol':
+        probabilities, new_batch = rearrange_tensor_for_lig(probabilities, batch, mol_index)
+        y_true, _ = rearrange_tensor_for_lig(y_true, batch, mol_index)
+        batch = new_batch
+
     probs_split = mask_split(probabilities, batch)
     y_true_split = mask_split(y_true, batch)
     for probs, y_true in zip(probs_split, y_true_split):

@@ -81,8 +81,7 @@ def test_eval(model, test_loader, device, loss_fn='BCEWithLogitsLoss', loss_type
             test_loss, out_sigmoid, y_true = get_loss(data, loss_fn, None, loss_type, model, return_out=True)
             test_losses.append(test_loss.item())
 
-            # TODO: ========================== ADAPT ==========================
-            succ, perc_found, probabilities_split = score_mol_success_for_batch(data.batch, y_true, out_sigmoid)
+            succ, perc_found, probabilities_split = score_mol_success_for_batch(data, y_true, out_sigmoid, type_calc=loss_type)
             successes.extend(succ)
             perc_vectors_found.extend(perc_found)
             predictions = (out_sigmoid >= 0.5).float()
@@ -114,6 +113,7 @@ def test_eval(model, test_loader, device, loss_fn='BCEWithLogitsLoss', loss_type
     print(f"Precision: {precision:.4f}")
     print(f"Recall: {recall:.4f}")
     print(f"F1 Score: {f1:.4f}")
+    print(f"Mol successes: {mol_successes:.4f}")
 
     return avg_loss, accuracy, precision, recall, f1, all_probabilities, mol_successes, perc_vectors_found
 
