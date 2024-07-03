@@ -13,7 +13,7 @@ possible_chain_ids = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H',
                       'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X',
                       'Y', 'Z']
 
-def process_for_viz(pdb_file, mol_file, probabilities, lig_mask, atom_idxs, target_file):
+def process_for_viz(pdb_file, mol_file, probabilities, lig_mask, atom_idxs, target_file, loss_type):
     """
 
     :param pdb_file:
@@ -24,25 +24,31 @@ def process_for_viz(pdb_file, mol_file, probabilities, lig_mask, atom_idxs, targ
     :param target_file:
     :return:
     """
+    if loss_type == 'avg_over_mol':
+        lig_only = True
+    else:
+        lig_only = False
+
     parser = PDBParser(QUIET=True)
 
     # process protein pdb
     structure1 = parser.get_structure('prot', pdb_file)
     prot_atoms = [x for x in structure1.get_atoms()]
 
-    prot_probs_ordered = []
-    prot_probabilities = [prob for prob, mask in zip(probabilities, lig_mask) if mask != 1]
-    prot_idxs = [idx for idx, mask in zip(atom_idxs, lig_mask) if mask != 1]
+    if not lig_only:
+        prot_probs_ordered = []
+        prot_probabilities = [prob for prob, mask in zip(probabilities, lig_mask) if mask != 1]
+        prot_idxs = [idx for idx, mask in zip(atom_idxs, lig_mask) if mask != 1]
 
-    for idx in range(len(prot_atoms)):
-        if idx in prot_idxs:
-            prob = prot_probabilities[prot_idxs.index(idx)]
-            prot_probs_ordered.append(prob)
-        else:
-            prot_probs_ordered.append(0)
+        for idx in range(len(prot_atoms)):
+            if idx in prot_idxs:
+                prob = prot_probabilities[prot_idxs.index(idx)]
+                prot_probs_ordered.append(prob)
+            else:
+                prot_probs_ordered.append(0)
 
-    for atom, prob in zip(prot_atoms, prot_probs_ordered):
-        atom.set_bfactor(prob)
+        for atom, prob in zip(prot_atoms, prot_probs_ordered):
+            atom.set_bfactor(prob)
 
     # process ligand
     # convert ligand sdf to pdb
@@ -110,10 +116,18 @@ def lig_codes_from_npz(file):
     data = np.load(file, allow_pickle=True)
     files = data.files
     return files, data
-    # data_dict = data[file].item()
-    # print(len(data_dict))
-    # print(data_dict.keys())
-    # return data_dict
+
+
+def viz_after_training(lig_code, lig_codes, mol_files, pdb_files, probs, lig_mask, atom_idxs, output_dir, loss_type):
+    lig_idx = lig_codes.index(lig_code)
+    mol_file = mol_files[lig_idx]
+    pdb_file = pdb_files[lig_idx]
+
+    target_file = os.path.join(output_dir, f"{lig_code}_viz.pdb")
+
+    # check how long probs/lig mask/atom idxs
+    process_for_viz(pdb_file, mol_file, probs, lig_mask, atom_idxs, target_file, loss_type)
+
 
 
 def main():
@@ -131,6 +145,7 @@ def main():
     parser.add_argument('--data_json', help='contains the names of all the mol and pdb files')
     parser.add_argument('--npz_file', help='the test_set_visualization.npz file saved by train.py')
     parser.add_argument('--output_dir')
+    parser.add_argument('--loss_type')
     args = parser.parse_args()
 
     if not os.path.exists(args.output_dir):
@@ -152,7 +167,7 @@ def main():
         lig_idx = lig_codes.index(test_lig_code)
         mol_file, pdb_file = mol_files[lig_idx], pdb_files[lig_idx]
         target_file = os.path.join(args.output_dir, f"{test_lig_code}_viz.pdb")
-        process_for_viz(pdb_file, mol_file, probs, lig_mask, atom_idxs, target_file)
+        process_for_viz(pdb_file, mol_file, probs, lig_mask, atom_idxs, target_file, args.loss_type)
 
 
 if __name__ == "__main__":

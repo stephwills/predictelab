@@ -15,6 +15,7 @@ from src.model.egnn_clean import EGNN
 from torch_geometric.loader import DataLoader
 from src.utils.utils import get_pos_weight_from_train, score_mol_success_for_batch
 from src.model.loss import *
+from src.utils.viz import viz_after_training
 
 act_functions = {'SiLU': nn.SiLU}
 
@@ -121,7 +122,7 @@ def test_eval(model, test_loader, device, loss_fn='BCEWithLogitsLoss', loss_type
 def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_size, n_cpus, hidden_nf,
           list_of_vectors=None, random_state=42, lr=1e-4, processed_dir=None, save_processed_files=None, model_dir=None,
           use_wandb=False, project_name='elab_egnn', prot_dist_threshold=8, intra_cutoff=2, inter_cutoff=10,
-          verbose=True, act_fn=nn.SiLU, loss_fn='BCEWithLogitsLoss', loss_type='no_avg'):
+          verbose=True, act_fn=nn.SiLU, loss_fn='BCEWithLogitsLoss', loss_type='no_avg', n_layers=4):
     """
 
     :param n_epochs:
@@ -202,7 +203,7 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
     in_edge_nf = dataset[0].edge_attr.shape[1]
 
     # initialise model
-    model = EGNN(in_node_nf, hidden_nf, out_node_nf, in_edge_nf, device, act_fn=act_fn())
+    model = EGNN(in_node_nf, hidden_nf, out_node_nf, in_edge_nf, device, act_fn=act_fn(), n_layers=n_layers)
 
     # get optimizer
     optim = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
@@ -258,8 +259,11 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
                           'f1': f1,
                           'perc_mol_successes': mol_successes}})
 
-
     # if we want to save visualization
+    viz_dir = os.path.join(model_dir, 'viz')
+    if not os.path.exists(viz_dir):
+        os.mkdir(viz_dir)
+
     viz_dict = {}
     for i, graph in enumerate(test):
         lig_code = graph.lig_code
@@ -271,8 +275,10 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
                               'atom_idxs': atom_idxs,
                               'probs': probs}
 
+        viz_after_training(lig_code, lig_codes, mol_files, pdb_files, probs, lig_mask, atom_idxs, viz_dir, loss_type)
+
     # print(viz_dict)
-    np.savez(os.path.join(model_dir, 'test_set_visualization.npy'), **viz_dict)
+    np.savez(os.path.join(model_dir, 'test_set_visualization.npz'), **viz_dict)
 
     if use_wandb:
         print('finish')
@@ -304,6 +310,7 @@ def main():
     parser.add_argument('--loss_type', default='no_avg', choices=['no_avg', 'avg_over_graph', 'avg_over_mol'])
     parser.add_argument('--loss_function', default='BCEWithLogitsLoss', choices=['BCEWithLogitsLoss', 'BCELoss'])
     parser.add_argument('--act_function', default='SiLU', choices=['SiLU'])
+    parser.add_argument('--n_layers', type=int, default=4)
     parser.add_argument('--use_wandb', action='store_true')
     parser.add_argument('--verbose', action='store_true')
     args = parser.parse_args()
@@ -348,7 +355,8 @@ def main():
           verbose=args.verbose,
           loss_type=args.loss_type,
           act_fn=act_functions[args.act_function],
-          loss_fn=args.loss_function)
+          loss_fn=args.loss_function,
+          n_layers=args.n_layers)
 
 
 if __name__ == "__main__":
