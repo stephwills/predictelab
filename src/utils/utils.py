@@ -1,5 +1,9 @@
 import os
+
+import numpy as np
 import torch
+from sklearn.metrics import (accuracy_score, f1_score, precision_score,
+                             recall_score)
 
 
 def generate_fnames_from_dir(dir):
@@ -155,3 +159,19 @@ def score_mol_success_for_batch(data, y_true, probabilities, quantile=0.9, type_
         successes.append(res)
         perc_found.append(perc)
     return successes, perc_found, probs_split
+
+
+def get_metrics_from_predictions(all_labels, all_predictions, successes):
+    # concatenate all labels and predictions from batches
+    all_labels = np.concatenate(all_labels)
+    all_predictions = np.concatenate(all_predictions)
+
+    # calculate metrics
+    accuracy = accuracy_score(all_labels, all_predictions)
+    precision = precision_score(all_labels, all_predictions)
+    recall = recall_score(all_labels, all_predictions)
+    f1 = f1_score(all_labels, all_predictions)
+    # calculate mol successes
+    mol_successes = (sum(successes) / len(successes)) * 100
+
+    return accuracy, precision, recall, f1, mol_successes

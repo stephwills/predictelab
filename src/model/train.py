@@ -13,7 +13,7 @@ from sklearn.model_selection import train_test_split
 from src.dataset.pyg_dataset import ElabDataset
 from src.model.egnn_clean import EGNN
 from torch_geometric.loader import DataLoader
-from src.utils.utils import get_pos_weight_from_train, score_mol_success_for_batch
+from src.utils.utils import get_pos_weight_from_train, score_mol_success_for_batch, get_metrics_from_predictions
 from src.model.loss import *
 from src.utils.viz import viz_after_training
 
@@ -34,32 +34,60 @@ def run_epoch(model, optim, train_dataloader, eval_dataloader, device, loss_fn='
     :param loss_type:
     :return:
     """
-    # retrieve loss function
-    loss_function_init = loss_functions[loss_fn]
-
     # train the model
     model.train()
     epoch_train_losses, epoch_train_losses_notweighted = [], []
+    train_labels, train_predictions, train_successes = [], [], []
+
     for i, data in enumerate(train_dataloader):
         data = data.to(device)
         optim.zero_grad()  # delete old gradients
-        loss = get_loss(data, loss_fn, pos_weight, loss_type, model)
+        loss, out_sigmoid, y_true = get_loss(data, loss_fn, pos_weight, loss_type, model, return_out=True)
         loss_not_weighted = get_loss(data, loss_fn, None, loss_type, model)
         epoch_train_losses.append(loss.item())
         epoch_train_losses_notweighted.append(loss_not_weighted.item())
         loss.backward()
         optim.step()
 
+        # calculate metrics
+        succ, perc_found, probabilities_split = score_mol_success_for_batch(data, y_true, out_sigmoid,
+                                                                            type_calc=loss_type)
+        train_successes.extend(succ)
+        predictions = (out_sigmoid >= 0.5).float()
+        train_labels.append(y_true.cpu().detach().numpy())
+        train_predictions.append(predictions.cpu().detach().numpy())
+
     # calculate loss function for validation set
     epoch_val_losses = []
+    val_labels, val_predictions, val_successes = [], [], []
     with torch.no_grad():
         model.eval()  # set the model to eval mode
         for data in eval_dataloader:
             data = data.to(device)
-            val_loss = get_loss(data, loss_fn, None, loss_type, model)
+            val_loss, val_out_sigmoid, val_y_true = get_loss(data, loss_fn, None, loss_type, model, return_out=True)
             epoch_val_losses.append(val_loss.item())
 
-    return np.mean(epoch_train_losses), np.mean(epoch_val_losses), np.mean(epoch_train_losses_notweighted)
+            # calculate metrics
+            v_succ, v_perc_found, v_probabilities_split = score_mol_success_for_batch(data, val_y_true, val_out_sigmoid,
+                                                                                type_calc=loss_type)
+            val_successes.extend(v_succ)
+            v_predictions = (val_out_sigmoid >= 0.5).float()
+            val_labels.append(val_y_true.cpu().detach().numpy())
+            val_predictions.append(v_predictions.cpu().detach().numpy())
+
+    # concatenate all labels and predictions from batches
+    train_labels = np.concatenate(train_labels)
+    train_predictions = np.concatenate(train_predictions)
+    train_accuracy, train_precision, train_recall, train_f1, train_mol_successes = get_metrics_from_predictions(train_labels, train_predictions, train_successes)
+
+    val_labels = np.concatenate(val_labels)
+    val_predictions = np.concatenate(val_predictions)
+    val_accuracy, val_precision, val_recall, val_f1, val_mol_successes = get_metrics_from_predictions(val_labels, val_predictions, val_successes)
+
+
+    return (np.mean(epoch_train_losses), np.mean(epoch_val_losses), np.mean(epoch_train_losses_notweighted), \
+            train_accuracy, train_precision, train_recall, train_f1, train_mol_successes, \
+            val_accuracy, val_precision, val_recall, val_f1, val_mol_successes)
 
 
 def test_eval(model, test_loader, device, loss_fn='BCEWithLogitsLoss', loss_type='no_avg'):
@@ -212,9 +240,14 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
     # run training
     train_losses, val_losses, train_losses_notweighted = [], [], []
     for epoch in range(n_epochs):
-        train_loss, val_loss, train_loss_notweighted = run_epoch(model, optim, train_dataloader, val_dataloader,
+        epoch_data = run_epoch(model, optim, train_dataloader, val_dataloader,
                                          device=device, loss_fn=loss_fn, pos_weight=pos_weight,
                                          loss_type=loss_type)
+
+        train_loss, val_loss, train_loss_notweighted = epoch_data[0], epoch_data[1], epoch_data[2]
+        train_accuracy, train_precision, train_recall, train_f1, train_mol_successes = epoch_data[3], epoch_data[4], epoch_data[5], epoch_data[6], epoch_data[7]
+        val_accuracy, val_precision, val_recall, val_f1, val_mol_successes = epoch_data[8], epoch_data[9], epoch_data[10], epoch_data[11], epoch_data[12]
+
         train_losses.append(train_loss)
         val_losses.append(val_loss)
         train_losses_notweighted.append(train_loss_notweighted)
@@ -242,7 +275,17 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
             run.log({'epoch': epoch,
                      'train_loss': train_loss,
                      'train_loss_noweight': train_loss_notweighted,
-                     'val_loss': val_loss})
+                     'val_loss': val_loss,
+                     'train_accuracy': train_accuracy,
+                     'train_precision': train_precision,
+                     'train_recall': train_recall,
+                     'train_f1': train_f1,
+                     'train_mol_successes': train_mol_successes,
+                     'val_accuracy': val_accuracy,
+                     'val_precision': val_precision,
+                     'val_recall': val_recall,
+                     'val_f1': val_f1,
+                     'val_mol_successes': val_mol_successes})
 
     avg_loss, accuracy, precision, recall, f1, probabilities, mol_successes, perc_vectors_found = test_eval(model, test_dataloader, device,
                                                                         loss_fn=loss_fn, loss_type=loss_type)
@@ -270,10 +313,12 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
         lig_mask = graph.lig_mask.cpu().detach().numpy()
         atom_idxs = graph.atom_idxs.cpu().detach().numpy()
         probs = probabilities[i]
+        y_true = graph.y.cpu().detach().numpy()
 
         viz_dict[lig_code] = {'lig_mask': lig_mask,
                               'atom_idxs': atom_idxs,
-                              'probs': probs}
+                              'probs': probs,
+                              'y_true': y_true}
 
         viz_after_training(lig_code, lig_codes, mol_files, pdb_files, probs, lig_mask, atom_idxs, viz_dir, loss_type)
 
@@ -283,6 +328,7 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
     if use_wandb:
         print('finish')
         run.finish()
+
 
 def main():
     """
