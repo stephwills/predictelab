@@ -24,7 +24,7 @@ act_functions = {'SiLU': nn.SiLU}
 
 
 def run_epoch(epoch, model, optim, train_dataloader, eval_dataloader, device, loss_fn='BCEWithLogitsLoss',
-              pos_weight=None, loss_type='no_avg', use_lr_scheduler=False, scheduler=None):
+              pos_weight=None, loss_type='no_avg', use_lr_scheduler=False, scheduler=None, lr_scheduler_type=None):
     """
 
     :param model:
@@ -62,7 +62,10 @@ def run_epoch(epoch, model, optim, train_dataloader, eval_dataloader, device, lo
 
     if use_lr_scheduler:
         before_lr = optim.param_groups[0]["lr"]
-        scheduler.step()
+        if lr_scheduler_type == 'Linear':
+            scheduler.step()
+        else:
+            scheduler.step(np.mean(epoch_train_losses))
         after_lr = optim.param_groups[0]["lr"]
         print("Epoch %d: SGD lr %.4f -> %.4f" % (epoch, before_lr, after_lr))
 
@@ -160,7 +163,7 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
           list_of_vectors=None, random_state=42, lr=1e-4, processed_dir=None, save_processed_files=None, model_dir=None,
           use_wandb=False, project_name='elab_egnn', prot_dist_threshold=8, intra_cutoff=2, inter_cutoff=10,
           verbose=True, act_fn=nn.SiLU, loss_fn='BCEWithLogitsLoss', loss_type='no_avg', n_layers=4,
-          use_lr_scheduler=False, lr_scheduler_type='Linear'):
+          use_lr_scheduler=False, lr_scheduler_type=None):
     """
 
     :param n_epochs:
@@ -189,12 +192,14 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
     :param loss_fn:
     :return:
     """
+    name = f"batch_{batch_size}_lr_{lr}_nlayers_{n_layers}_lr_scheduler_{use_lr_scheduler}_type_{lr_scheduler_type}"
     if not model_dir:
         model_dir = '.'
 
     if use_wandb:
         wandb.login()
         run = wandb.init(
+            name=name,
             project=project_name,
             config={"learning_rate": lr,
                     "epochs": n_epochs}
@@ -246,6 +251,7 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
     optim = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     epochs_without_improvement = 0
 
+    scheduler = None
     if use_lr_scheduler:
         if lr_scheduler_type == 'Linear':
             scheduler = lr_scheduler.LinearLR(optim, start_factor=1.0, end_factor=0.3, total_iters=10)
@@ -258,7 +264,7 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
         epoch_data = run_epoch(epoch, model, optim, train_dataloader, val_dataloader,
                                          device=device, loss_fn=loss_fn, pos_weight=pos_weight,
                                          loss_type=loss_type, use_lr_scheduler=use_lr_scheduler,
-                                         scheduler=scheduler)
+                                         scheduler=scheduler, lr_scheduler_type=lr_scheduler_type)
 
         train_loss, val_loss, train_loss_notweighted = epoch_data[0], epoch_data[1], epoch_data[2]
         train_accuracy, train_precision, train_recall, train_f1, train_mol_successes = epoch_data[3], epoch_data[4], epoch_data[5], epoch_data[6], epoch_data[7]
