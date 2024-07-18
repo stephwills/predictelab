@@ -6,22 +6,25 @@ import os
 from argparse import ArgumentParser
 
 import numpy as np
+import torch.optim.lr_scheduler as lr_scheduler
 import wandb
 from sklearn.metrics import (accuracy_score, f1_score, precision_score,
                              recall_score)
 from sklearn.model_selection import train_test_split
 from src.dataset.pyg_dataset import ElabDataset
 from src.model.egnn_clean import EGNN
-from torch_geometric.loader import DataLoader
-from src.utils.utils import get_pos_weight_from_train, score_mol_success_for_batch, get_metrics_from_predictions
 from src.model.loss import *
+from src.utils.utils import (get_metrics_from_predictions,
+                             get_pos_weight_from_train,
+                             score_mol_success_for_batch)
 from src.utils.viz import viz_after_training
+from torch_geometric.loader import DataLoader
 
 act_functions = {'SiLU': nn.SiLU}
 
 
-def run_epoch(model, optim, train_dataloader, eval_dataloader, device, loss_fn='BCEWithLogitsLoss',
-              pos_weight=None, loss_type='no_avg'):
+def run_epoch(epoch, model, optim, train_dataloader, eval_dataloader, device, loss_fn='BCEWithLogitsLoss',
+              pos_weight=None, loss_type='no_avg', use_lr_scheduler=False, scheduler=None):
     """
 
     :param model:
@@ -56,6 +59,12 @@ def run_epoch(model, optim, train_dataloader, eval_dataloader, device, loss_fn='
         predictions = (out_sigmoid >= 0.5).float()
         train_labels.append(y_true.cpu().detach().numpy())
         train_predictions.append(predictions.cpu().detach().numpy())
+
+    if use_lr_scheduler:
+        before_lr = optim.param_groups[0]["lr"]
+        scheduler.step()
+        after_lr = optim.param_groups[0]["lr"]
+        print("Epoch %d: SGD lr %.4f -> %.4f" % (epoch, before_lr, after_lr))
 
     # calculate loss function for validation set
     epoch_val_losses = []
@@ -150,7 +159,8 @@ def test_eval(model, test_loader, device, loss_fn='BCEWithLogitsLoss', loss_type
 def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_size, n_cpus, hidden_nf,
           list_of_vectors=None, random_state=42, lr=1e-4, processed_dir=None, save_processed_files=None, model_dir=None,
           use_wandb=False, project_name='elab_egnn', prot_dist_threshold=8, intra_cutoff=2, inter_cutoff=10,
-          verbose=True, act_fn=nn.SiLU, loss_fn='BCEWithLogitsLoss', loss_type='no_avg', n_layers=4):
+          verbose=True, act_fn=nn.SiLU, loss_fn='BCEWithLogitsLoss', loss_type='no_avg', n_layers=4,
+          use_lr_scheduler=False):
     """
 
     :param n_epochs:
@@ -212,13 +222,12 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
     train, test = train_test_split(dataset, test_size=test_size, random_state=random_state)
     train, validation = train_test_split(train, test_size=test_size / 0.95, random_state=random_state)
 
-    # get weight for loss calc
-
     # create dataloader objects
     train_dataloader = DataLoader(train, batch_size=batch_size, shuffle=True, num_workers=n_cpus,)
     val_dataloader = DataLoader(validation, batch_size=batch_size)
     test_dataloader = DataLoader(test, batch_size=batch_size)
 
+    # get weight for loss calc
     if loss_type == 'avg_over_mol':
         pos_weight = get_pos_weight_from_train(train, lig_only=True)
     else:
@@ -237,12 +246,16 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
     optim = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     epochs_without_improvement = 0
 
+    if use_lr_scheduler:
+        scheduler = lr_scheduler.LinearLR(optim, start_factor=1.0, end_factor=0.3, total_iters=10)
+
     # run training
     train_losses, val_losses, train_losses_notweighted = [], [], []
     for epoch in range(n_epochs):
-        epoch_data = run_epoch(model, optim, train_dataloader, val_dataloader,
+        epoch_data = run_epoch(epoch, model, optim, train_dataloader, val_dataloader,
                                          device=device, loss_fn=loss_fn, pos_weight=pos_weight,
-                                         loss_type=loss_type)
+                                         loss_type=loss_type, use_lr_scheduler=use_lr_scheduler,
+                                         scheduler=scheduler)
 
         train_loss, val_loss, train_loss_notweighted = epoch_data[0], epoch_data[1], epoch_data[2]
         train_accuracy, train_precision, train_recall, train_f1, train_mol_successes = epoch_data[3], epoch_data[4], epoch_data[5], epoch_data[6], epoch_data[7]
@@ -359,6 +372,7 @@ def main():
     parser.add_argument('--n_layers', type=int, default=4)
     parser.add_argument('--use_wandb', action='store_true')
     parser.add_argument('--verbose', action='store_true')
+    parser.add_argument('--use_lr_scheduler', action='store_true')
     args = parser.parse_args()
 
     if not os.path.exists(args.model_dir):
@@ -402,7 +416,8 @@ def main():
           loss_type=args.loss_type,
           act_fn=act_functions[args.act_function],
           loss_fn=args.loss_function,
-          n_layers=args.n_layers)
+          n_layers=args.n_layers,
+          use_lr_scheduler=args.use_lr_scheduler)
 
 
 if __name__ == "__main__":
