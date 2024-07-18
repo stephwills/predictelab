@@ -160,7 +160,7 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
           list_of_vectors=None, random_state=42, lr=1e-4, processed_dir=None, save_processed_files=None, model_dir=None,
           use_wandb=False, project_name='elab_egnn', prot_dist_threshold=8, intra_cutoff=2, inter_cutoff=10,
           verbose=True, act_fn=nn.SiLU, loss_fn='BCEWithLogitsLoss', loss_type='no_avg', n_layers=4,
-          use_lr_scheduler=False):
+          use_lr_scheduler=False, lr_scheduler_type='Linear'):
     """
 
     :param n_epochs:
@@ -247,7 +247,10 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
     epochs_without_improvement = 0
 
     if use_lr_scheduler:
-        scheduler = lr_scheduler.LinearLR(optim, start_factor=1.0, end_factor=0.3, total_iters=10)
+        if lr_scheduler_type == 'Linear':
+            scheduler = lr_scheduler.LinearLR(optim, start_factor=1.0, end_factor=0.3, total_iters=10)
+        if lr_scheduler_type == 'ReduceLROnPlateau':
+            scheduler = lr_scheduler.ReduceLROnPlateau(optim, mode='min', factor=0.1, patience=5, threshold=0.0001)
 
     # run training
     train_losses, val_losses, train_losses_notweighted = [], [], []
@@ -373,6 +376,7 @@ def main():
     parser.add_argument('--use_wandb', action='store_true')
     parser.add_argument('--verbose', action='store_true')
     parser.add_argument('--use_lr_scheduler', action='store_true')
+    parser.add_argument('--lr_scheduler_type', default='ReduceLROnPlateau', choices=['ReduceLROnPlateau', 'Linear'])
     args = parser.parse_args()
 
     if not os.path.exists(args.model_dir):
@@ -417,7 +421,8 @@ def main():
           act_fn=act_functions[args.act_function],
           loss_fn=args.loss_function,
           n_layers=args.n_layers,
-          use_lr_scheduler=args.use_lr_scheduler)
+          use_lr_scheduler=args.use_lr_scheduler,
+          lr_scheduler_type=args.lr_scheduler_type)
 
 
 if __name__ == "__main__":
