@@ -133,7 +133,7 @@ def score_mol_success(y_true, probabilities, quantile=0.9):
         return False, num_correct/num_poss
 
 
-def score_mol_success_for_batch(data, y_true, probabilities, quantile=0.9, type_calc='avg_over_mol'):
+def score_mol_success_for_batch(data, y_true, probabilities, quantile=0.75, type_calc='avg_over_mol'):
     """
     score_mol_success but over a batch
 
