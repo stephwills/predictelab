@@ -2,7 +2,10 @@ notebooks/
 backup/
 test/model/*
 test/processed/*
+test/viz/*
 .idea/
 .idea
 *__pycache__*
-
+data/viz
+src/model/train_lightning.py
+src/model/train_lucidrains.py
