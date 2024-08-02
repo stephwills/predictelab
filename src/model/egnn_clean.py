@@ -1,3 +1,4 @@
+"""From https://github.com/vgsatorras/egnn"""
 from torch import nn
 import torch
 

@@ -228,7 +228,7 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
     train, validation = train_test_split(train, test_size=test_size / 0.95, random_state=random_state)
 
     # create dataloader objects
-    train_dataloader = DataLoader(train, batch_size=batch_size, shuffle=True, num_workers=n_cpus,)
+    train_dataloader = DataLoader(train, batch_size=batch_size, shuffle=True)
     val_dataloader = DataLoader(validation, batch_size=batch_size)
     test_dataloader = DataLoader(test, batch_size=batch_size)
 
