@@ -5,6 +5,8 @@ import torch
 from sklearn.metrics import (accuracy_score, f1_score, precision_score,
                              recall_score)
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 def generate_fnames_from_dir(dir):
     """
@@ -27,11 +29,11 @@ def get_pos_weight_from_train(train, lig_only=False):
     if not lig_only:
         num_0s = sum([(data.y == 0).sum() for data in train]).item()
         num_1s = sum([(data.y).sum() for data in train]).item()
-        return torch.tensor(num_0s / num_1s, dtype=torch.float64)
+        return torch.tensor(num_0s / num_1s, dtype=torch.float64, device=device)
     else:
         num_0s = sum([(mask_split(data.y, data.lig_mask)[1] == 0).sum() for data in train]).item()
         num_1s = sum([(mask_split(data.y, data.lig_mask)[1]).sum() for data in train]).item()
-        return torch.tensor(num_0s / num_1s, dtype=torch.float64)
+        return torch.tensor(num_0s / num_1s, dtype=torch.float64, device=device)
 
 
 def get_pos_weight(data, is_y=False):
@@ -74,7 +76,7 @@ def rearrange_tensor_for_lig(losses, index, mol_index):
     split_idxs = mask_split(index, index)
     split_mol_idxs = mask_split(mol_index, index)
 
-    lig_losses_all = torch.tensor([])
+    lig_losses_all = torch.tensor([], device=device)
     index_all = []
 
     for split_loss, split_idx, split_mol_idx in zip(split_losses, split_idxs, split_mol_idxs):
@@ -83,7 +85,7 @@ def rearrange_tensor_for_lig(losses, index, mol_index):
         lig_losses_all = torch.cat((lig_losses_all, lig_losses))
         index_all.extend(lig_idx)
 
-    return lig_losses_all, torch.tensor(index_all)
+    return lig_losses_all, torch.tensor(index_all, device=device)
 
 
 def mask_avg(src, index):
@@ -96,7 +98,7 @@ def mask_avg(src, index):
     """
     uniq_elements, counts = torch.unique(index, return_counts=True)
     n_indices = uniq_elements.numel()
-    added = torch.zeros(n_indices, dtype=src.dtype)
+    added = torch.zeros(n_indices, dtype=src.dtype, device=device)
     added = torch.scatter_add(added, dim=0, index=index, src=src)
     return added / counts
 

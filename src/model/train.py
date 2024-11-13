@@ -163,7 +163,7 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
           list_of_vectors=None, random_state=42, lr=1e-4, processed_dir=None, save_processed_files=None, model_dir=None,
           use_wandb=False, project_name='elab_egnn', prot_dist_threshold=8, intra_cutoff=2, inter_cutoff=10,
           verbose=True, act_fn=nn.SiLU, loss_fn='BCEWithLogitsLoss', loss_type='no_avg', n_layers=4,
-          use_lr_scheduler=False, lr_scheduler_type=None):
+          use_lr_scheduler=False, lr_scheduler_type=None, data_split=None):
     """
 
     :param n_epochs:
@@ -190,6 +190,7 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
     :param avg_loss_over_mols:
     :param act_fn:
     :param loss_fn:
+    :param data_split: dictionary containing {train: [idxs], test: [idxs], validation: [idxs]}
     :return:
     """
     name = f"batch_{batch_size}_lr_{lr}_nlayers_{n_layers}_lr_scheduler_{use_lr_scheduler}_type_{lr_scheduler_type}"
@@ -224,8 +225,13 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
     dataset.load(dataset.processed_file_names[0])
 
     # split data into train, test and validation sets
-    train, test = train_test_split(dataset, test_size=test_size, random_state=random_state)
-    train, validation = train_test_split(train, test_size=test_size / 0.95, random_state=random_state)
+    if not data_split:
+        train, test = train_test_split(dataset, test_size=test_size, random_state=random_state)
+        train, validation = train_test_split(train, test_size=test_size / 0.95, random_state=random_state)
+    else:
+        train = [dataset[idx] for idx in data_split['train']]
+        test = [dataset[idx] for idx in data_split['test']]
+        validation = [dataset[idx] for idx in data_split['validation']]
 
     # create dataloader objects
     train_dataloader = DataLoader(train, batch_size=batch_size, shuffle=True)
@@ -383,6 +389,8 @@ def main():
     parser.add_argument('--verbose', action='store_true')
     parser.add_argument('--use_lr_scheduler', action='store_true')
     parser.add_argument('--lr_scheduler_type', default='ReduceLROnPlateau', choices=['ReduceLROnPlateau', 'Linear'])
+    parser.add_argument('--data_split_file', required=False,
+            help='json file with dictionary containing idxs of data split {train: [...], test: ..., validation: ...}')
     args = parser.parse_args()
 
     if not os.path.exists(args.model_dir):
@@ -401,6 +409,14 @@ def main():
     lig_codes, mol_files, pdb_files = data['lig_codes'], data['mol_files'], data['pdb_files']
     mol_files = [os.path.join(args.precursor_dir, file) for file in mol_files]
     pdb_files = [os.path.join(args.pdb_dir, file) for file in pdb_files]
+
+    # if data splitting is already specified
+    if args.data_split_file:
+        with open(args.data_split_file, "r") as f:
+            data_split = json.load(f)
+    else:
+        data_split = None
+
 
     train(n_epochs=args.n_epochs,
           patience=args.patience,
@@ -428,7 +444,8 @@ def main():
           loss_fn=args.loss_function,
           n_layers=args.n_layers,
           use_lr_scheduler=args.use_lr_scheduler,
-          lr_scheduler_type=args.lr_scheduler_type)
+          lr_scheduler_type=args.lr_scheduler_type,
+          data_split=data_split)
 
 
 if __name__ == "__main__":
