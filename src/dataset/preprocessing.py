@@ -11,6 +11,7 @@ PERMITTED_ATOMS = ['C', 'N', 'O', 'S', 'F', 'Si', 'P', 'Cl', 'Br', 'Mg', 'Na', '
 
 def get_protein_coords(pdb):
     """
+    Get protein coords and element symbols from apo pdb file using biopython
 
     :param pdb:
     :return:
@@ -25,10 +26,10 @@ def get_protein_coords(pdb):
 
 def get_ligand_coords(file, returnVectors=False):
     """
+    Get the ligand atom indices, coords and elements, and vectors (if stored as a mol prop)
 
-    :param sdf:
-    :param isVector:
-    :param vectorAtoms:
+    :param file: sdf of mol file
+    :param returnVectors: whether to return vectors stored as mol prop
     :return:
     """
     ext = file.split('.')[-1]
@@ -83,9 +84,11 @@ def one_hot_encoding(item, permitted_list):
 
 def get_atom_feature_vector(elem, isProt):
     """
+    Get feature vector for atom including one-hot encoding depending on element type and whether atom
+    belongs to ligand or protein
 
-    :param elem:
-    :param isProt:
+    :param elem: element symbol
+    :param isProt: bool, whether belongs to protein or not
     :return:
     """
     one_hot = one_hot_encoding(elem, PERMITTED_ATOMS)
@@ -133,6 +136,7 @@ def get_edge_feature_vector(i_is_prot, j_is_prot):
 
 def get_edges(ligand_coords, protein_coords, intra_cutoff=2.0, inter_cutoff=10.0):
     """
+    Generates edges by checking distances between atoms -- may want to change this!
 
     :param ligand_coords:
     :param protein_coords:
@@ -141,7 +145,7 @@ def get_edges(ligand_coords, protein_coords, intra_cutoff=2.0, inter_cutoff=10.0
     :return:
     """
     all_coords = np.vstack((ligand_coords, protein_coords))
-    is_prot = len(ligand_coords) * [True] + len(protein_coords) * [False]
+    is_prot = len(ligand_coords) * [False] + len(protein_coords) * [True]
 
     atom_dists = cdist(all_coords, all_coords)
 
@@ -155,7 +159,9 @@ def get_edges(ligand_coords, protein_coords, intra_cutoff=2.0, inter_cutoff=10.0
             if is_prot[i] != is_prot[j]:
                 edge_index.append((i, j))
                 edge_feature_vectors.append(get_edge_feature_vector(is_prot[i], is_prot[j]))
+
     intra_dists = np.where(atom_dists < intra_cutoff)
+
     for i, j in zip(intra_dists[0], intra_dists[0]):
         if i != j:
             if is_prot[i] == is_prot[j]:
@@ -172,23 +178,29 @@ def convert_to_graph(mol_file, pdb, prot_dist_threshold=8, intra_cutoff=2.0, int
     """
     Given a file for the ligand and a separate apo file for the protein, create input graph to GNN. Considers only
     'pocket atoms' within a specified distance of a ligand atom. Edges are decided according to distance between atoms
-    (and features denote what molecule they are inbetween).
+    (and features denote what molecule they are between).
 
-
-    :param mol_file:
-    :param pdb:
-    :param prot_dist_threshold:
-    :param intra_cutoff:
-    :param inter_cutoff:
+    :param mol_file: can be provided as .mol or .sdf
+    :param pdb: apo pdb file for protein
+    :param prot_dist_threshold: threshold to extract protein atoms with certain distance of any ligand atom
+    :param intra_cutoff: cut-off for intra-mol edges
+    :param inter_cutoff: cut-off for inter-mol edges
+    :param vectors: can manually provide vectors if not stored as a property for the rdkit mol
+    :param vectors_are_molprop: use vectors that have been stored as mol prop (comma delimited string, i.e. "0,3,4,5")
+    :param return_node_info: return extra properties useful for visualization later on
     :return:
     """
+    # get ligand coords, elements, idxs
     if vectors_are_molprop:
         lig_idxs, lig_elems, lig_coords, vector_idxs = get_ligand_coords(mol_file, returnVectors=True)
     else:
         lig_idxs, lig_elems, lig_coords = get_ligand_coords(mol_file, returnVectors=False)
         vector_idxs = vectors
 
+    # get ligand feature vectors
     lig_vectors = [get_atom_feature_vector(elem, False) for elem in lig_elems]
+
+    # get protein coords and elements from pdb file, select only atoms within dist threshold of ligand atoms
     prot_coords, prot_elems = get_protein_coords(pdb)
     dists = cdist(lig_coords, prot_coords)
     dist_thresh = np.where(dists < prot_dist_threshold)
@@ -198,12 +210,15 @@ def convert_to_graph(mol_file, pdb, prot_dist_threshold=8, intra_cutoff=2.0, int
         select_prot_idxs.add(prot_idx)
     select_prot_idxs = list(select_prot_idxs)
 
+    # get the protein coords and elements of the selected atoms
     prot_coords = prot_coords[select_prot_idxs]
     prot_elems = prot_elems[select_prot_idxs]
+
+    # get protein feature vectors
     prot_vectors = [get_atom_feature_vector(elem, True) for elem in prot_elems]
 
+    # all feature vectors
     feat_vectors = lig_vectors + prot_vectors
-
     n_nodes = len(feat_vectors)
     n_node_features = len(feat_vectors[0])
 
@@ -212,12 +227,16 @@ def convert_to_graph(mol_file, pdb, prot_dist_threshold=8, intra_cutoff=2.0, int
         h[i, :] = feat_vector
     h = torch.tensor(h, dtype=torch.float)
 
+    # whether each atom is a ground-truth vector or not
     y = [int(idx in vector_idxs) for idx in lig_idxs] + ([0] * len(prot_vectors))
     y = torch.tensor(y, dtype=torch.float32).unsqueeze(1)
 
+    # all coordinates
     x = np.vstack((lig_coords, prot_coords))
     x = torch.tensor(x, dtype=torch.float)
 
+    # get edges
+    # TODO: May want to change how edges are generated!
     edge_index, edge_attr = get_edges(lig_coords, prot_coords, intra_cutoff, inter_cutoff)
 
     # for visualizing predictions
