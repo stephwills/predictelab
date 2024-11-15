@@ -193,7 +193,7 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
     :param data_split: dictionary containing {train: [idxs], test: [idxs], validation: [idxs]}
     :return:
     """
-    name = f"batch_{batch_size}_lr_{lr}_nlayers_{n_layers}_lr_scheduler_{use_lr_scheduler}_type_{lr_scheduler_type}"
+    name = f"batch_{batch_size}_lr_{lr}_nlayers_{n_layers}_lr_scheduler_{use_lr_scheduler}_type_{lr_scheduler_type}"  # TODO: allow user specify
     if not model_dir:
         model_dir = '.'
 
@@ -257,6 +257,7 @@ def train(n_epochs, patience, lig_codes, mol_files, pdb_files, batch_size, test_
     optim = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     epochs_without_improvement = 0
 
+    # TODO: may want to play around with the schedulers more
     scheduler = None
     if use_lr_scheduler:
         if lr_scheduler_type == 'Linear':
@@ -364,35 +365,46 @@ def main():
     """
     import src.utils.config as config
     parser = ArgumentParser()
-    parser.add_argument('--data_json', help='dict containing {lig_codes: [], mol_files: [], pdb_files: []}')
+    parser.add_argument('--data_json',
+                        help='dict containing codes assigned to unique ligands and filenames (not paths) for mols (sdf/mol) and pdb files {lig_codes: [], mol_files: [], pdb_files: []}')
     parser.add_argument('--pdb_dir', help='path where the pdb fpaths are located')
     parser.add_argument('--precursor_dir', help='path where the mol fpaths are located')
     parser.add_argument('--processed_dir', help='dir to save processed data')
-    parser.add_argument('--model_dir')
-    parser.add_argument('--run_name')
+    parser.add_argument('--model_dir', help='dir to save outputs from the model')
+    parser.add_argument('--run_name', help='unique name for saving files and wandb project name')
     parser.add_argument('--n_epochs', type=int, default=config.N_EPOCHS)
     parser.add_argument('--patience', type=int, default=config.PATIENCE)
     parser.add_argument('--batch_size', type=int, default=config.BATCH_SIZE)
-    parser.add_argument('--test_size', type=float, default=config.TEST_SIZE)
+    parser.add_argument('--test_size', type=float, default=config.TEST_SIZE,
+                        help='if no specified data split, creates test set from data randomly')
     parser.add_argument('--n_cpus', type=int, default=config.N_CPUS)
     parser.add_argument('--hidden_nf', type=int, default=config.HIDDEN_NF)
-    parser.add_argument('--prot_dist_threshold', type=float, default=config.PROT_DIST_THRESHOLD)
-    parser.add_argument('--intra_cutoff', type=float, default=config.INTRA_CUTOFF)
-    parser.add_argument('--inter_cutoff', type=float, default=config.INTER_CUTOFF)
-    parser.add_argument('--random_state', type=int, default=config.RANDOM_STATE)
-    parser.add_argument('--lr', type=float, default=config.LR)
-    parser.add_argument('--loss_type', default='no_avg', choices=['no_avg', 'avg_over_graph', 'avg_over_mol'])
+    parser.add_argument('--prot_dist_threshold', type=float, default=config.PROT_DIST_THRESHOLD,
+                        help='threshold for protein atoms to consider according to distance from ligand atoms')
+    parser.add_argument('--intra_cutoff', type=float, default=config.INTRA_CUTOFF,
+                        help='distance threshold for intra-mol edges')
+    parser.add_argument('--inter_cutoff', type=float, default=config.INTER_CUTOFF,
+                        help='distnace threshold for inter-mol edges')
+    parser.add_argument('--random_state', type=int, default=config.RANDOM_STATE,
+                        help='random state for train/test split (if used)')
+    parser.add_argument('--lr', type=float, default=config.LR,
+                        help='learning rate')
+    parser.add_argument('--loss_type', default='avg_over_mol', choices=['no_avg', 'avg_over_graph', 'avg_over_mol'],
+                        help='how to calculate loss')
     parser.add_argument('--loss_function', default='BCEWithLogitsLoss', choices=['BCEWithLogitsLoss', 'BCELoss'])
     parser.add_argument('--act_function', default='SiLU', choices=['SiLU'])
-    parser.add_argument('--n_layers', type=int, default=4)
+    parser.add_argument('--n_layers', type=int, default=4,
+                        help='number of hidden layers')
     parser.add_argument('--use_wandb', action='store_true')
     parser.add_argument('--verbose', action='store_true')
-    parser.add_argument('--use_lr_scheduler', action='store_true')
+    parser.add_argument('--use_lr_scheduler', action='store_true',
+                        help='whether to use an LR scheduler')
     parser.add_argument('--lr_scheduler_type', default='ReduceLROnPlateau', choices=['ReduceLROnPlateau', 'Linear'])
     parser.add_argument('--data_split_file', required=False,
-            help='json file with dictionary containing idxs of data split {train: [...], test: ..., validation: ...}')
+                        help='json file with dictionary containing idxs of data split {train: [...], test: ..., validation: ...}')
     args = parser.parse_args()
 
+    # create dir to save model outputs
     if not os.path.exists(args.model_dir):
         os.mkdir(args.model_dir)
 
@@ -416,7 +428,6 @@ def main():
             data_split = json.load(f)
     else:
         data_split = None
-
 
     train(n_epochs=args.n_epochs,
           patience=args.patience,
